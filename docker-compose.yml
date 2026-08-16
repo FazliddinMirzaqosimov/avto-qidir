@@ -1,0 +1,37 @@
+# Deliberately self-contained: its own compose project name, its own network and volume,
+# and no published ports — the scanner only makes outbound requests. Nothing here can
+# collide with anything else already running on the host.
+name: ev-hunter
+
+services:
+  ev-hunter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ev-hunter:latest
+    container_name: ev-hunter
+    # Survives `docker restart`, daemon restarts and host reboots; stays down only if
+    # you stop it yourself.
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: Asia/Tashkent
+      EV_HUNTER_DATA_DIR: /data
+    volumes:
+      - ev-hunter-data:/data
+    # Keeps `docker logs` from filling the disk over months of hourly scans.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # A runaway parse on a huge page should never threaten the other projects.
+    mem_limit: 512m
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  ev-hunter-data:
+    name: ev-hunter-data

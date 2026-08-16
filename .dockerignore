@@ -1,0 +1,11 @@
+.git
+.gitignore
+.env
+*.db
+*.log
+debug/
+__pycache__/
+*.py[cod]
+README.md
+deploy.sh
+docker-compose.yml

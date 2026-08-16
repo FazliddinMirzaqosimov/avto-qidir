@@ -1,0 +1,74 @@
+{
+  "_comment": "Seed config. Copied to /data/config.json on first start, then never overwritten - edit the copy on the server. Telegram credentials come from the .env file, not from here.",
+  "telegram": {
+    "bot_token": "",
+    "chat_id": ""
+  },
+  "filters": {
+    "max_price_usd": 17000,
+    "min_year": 2022,
+    "ideal_max_mileage_km": 50000,
+    "hard_max_mileage_km": 100000,
+    "first_run_backfill_days": 7,
+    "regions": [
+      "tashkent",
+      "toshkent",
+      "ташкент",
+      "тошкент",
+      "chirchiq",
+      "чирчик",
+      "yangiyol",
+      "olmaliq",
+      "angren",
+      "ohangaron",
+      "parkent",
+      "zangiota",
+      "qibray",
+      "bekabad",
+      "нурафшон",
+      "nurafshon"
+    ],
+    "_exclude_note": "Only non-cars plus the Changan Ben Ben / Benni / E-Star. Small EVs such as the BYD Seagull are wanted and must NOT be listed here.",
+    "exclude_keywords": [
+      "ben ben",
+      "benben",
+      "ben-ben",
+      "benni",
+      "бен бен",
+      "бенбен",
+      "бенни",
+      "e-star",
+      "estar",
+      "е-стар",
+      "скутер",
+      "самокат",
+      "мопед",
+      "мотоцикл",
+      "velosiped",
+      "велосипед",
+      "квадроцикл",
+      "трицикл",
+      "golf car",
+      "гольф кар"
+    ],
+    "max_age_days": 0,
+    "_min_mileage_note": "0 disables the check. Set to 1 to hide '0 km' dealer/import ads - that was previously dropping ~120 listings per scan.",
+    "min_mileage_km": 0
+  },
+  "sources": {
+    "olx": true,
+    "avtoelon": true,
+    "avtobozor": false,
+    "uzumavto": false,
+    "mashina": false,
+    "avtouz": true
+  },
+  "runtime": {
+    "interval_minutes": 60,
+    "request_timeout_seconds": 25,
+    "max_items_per_message": 8,
+    "usd_uzs_fallback_rate": 12800,
+    "notify_on_source_failure": true,
+    "olx_pages_per_query": 3
+  }
+}

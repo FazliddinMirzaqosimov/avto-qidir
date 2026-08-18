@@ -281,6 +281,18 @@ def upsert_listing(listing, brand: str | None, tier: str) -> bool:
                  listing.price_usd, listing.year, listing.mileage_km, listing.city,
                  listing.fuel, listing.owners, brand, tier,
                  listing.posted_at.isoformat() if listing.posted_at else None, now_iso()))
+
+            # Rows carried over from the old single-chat `seen` table have no brand, year
+            # or mileage. Without this backfill they can never satisfy a brand filter, so
+            # a subscriber would see an empty feed until brand-new ads appeared.
+            # COALESCE keeps whatever is already there and only fills the gaps.
+            conn.execute(
+                "UPDATE listings SET brand=COALESCE(brand,?), tier=COALESCE(tier,?), "
+                "year=COALESCE(year,?), mileage_km=COALESCE(mileage_km,?), "
+                "city=COALESCE(NULLIF(city,''),?), fuel=COALESCE(NULLIF(fuel,''),?), "
+                "owners=COALESCE(owners,?) WHERE key=?",
+                (brand, tier, listing.year, listing.mileage_km, listing.city,
+                 listing.fuel, listing.owners, listing.key))
             conn.commit()
             return exists is None
         finally:

@@ -114,6 +114,24 @@ check("delivered one is not repeated", {r["key"] for r in rows2} == {"OLX:2"})
 everything = botdb.undelivered_for(222, None, 10)
 check("no brand filter means everything", len(everything) == 3, len(everything))
 
+# A row migrated from the old `seen` table arrives with no brand/year/mileage. Re-seeing
+# the same ad must fill those in, otherwise no brand filter can ever match it.
+_c = botdb.connect()
+_c.execute("INSERT OR REPLACE INTO listings(key,source,ad_id,url,title,price_usd,first_seen)"
+           " VALUES('OLX:9','OLX','9','https://olx.uz/9','BYD Dolphin 2024',12000,'2026-01-01')")
+_c.commit()
+_c.close()
+check("migrated row starts brandless",
+      all(r["key"] != "OLX:9" for r in botdb.undelivered_for(333, {"BYD"}, 10)))
+l9 = FakeListing("OLX:9", "BYD Dolphin 2024", 12000)
+botdb.upsert_listing(l9, "BYD", "top")
+back = botdb.undelivered_for(333, {"BYD"}, 10)
+check("brand backfilled on re-scan", any(r["key"] == "OLX:9" for r in back),
+      [r["key"] for r in back])
+row9 = [r for r in back if r["key"] == "OLX:9"]
+check("mileage backfilled too", row9 and row9[0]["mileage_km"] == 10000,
+      row9[0]["mileage_km"] if row9 else None)
+
 print("\n=== 6. message rendering ===")
 row = dict(botdb.latest_for(111, {"BYD"}, 1)[0])
 text = botmod.render_listing(row, 1)
@@ -190,7 +208,7 @@ check("no leftover English in the paused/help text",
 print("\n=== 9. stats ===")
 s = botdb.stats()
 check("counts users", s["users"] >= 1)
-check("counts listings", s["listings"] == 3, s["listings"])
+check("counts listings", s["listings"] == 4, s["listings"])
 
 print("\n" + "=" * 46)
 print(f"  {PASS} passed, {FAIL} failed")

@@ -199,6 +199,12 @@ class Bot:
         self.tg.send(self.admin_id, render_user_card(user),
                      reply_markup=admin_keyboard(user["tg_id"], bool(user.get("blocked"))))
 
+    # Telegram cannot open a conversation the user never started. After a bot-token swap
+    # every previously-registered chat answers 400 "chat not found", and a user who blocks
+    # the bot answers 403. Neither clears on its own, so retrying every cycle forever just
+    # fills the log - park the subscriber instead until they press Start again.
+    UNREACHABLE = (400, 403)
+
     def send_listings(self, tg_id: int, rows: list[dict], header: str) -> list[str]:
         """Send listings in chunks. Returns the keys actually delivered."""
         delivered: list[str] = []
@@ -208,8 +214,14 @@ class Bot:
             parts = [header] if start == 0 else [T["continued"]]
             for offset, row in enumerate(batch, start=start + 1):
                 parts.append(render_listing(row, offset))
-            if self.tg.send(tg_id, "\n\n".join(parts)) is None:
-                self.log(f"delivery to {tg_id} failed; will retry next cycle", "WARN")
+            result, error = self.tg.send_checked(tg_id, "\n\n".join(parts))
+            if result is None:
+                if error in self.UNREACHABLE:
+                    botdb.set_user_field(tg_id, "state", "new")
+                    self.log(f"{tg_id} is unreachable (Telegram {error}) — parked until "
+                             f"they send /start again.", "WARN")
+                else:
+                    self.log(f"delivery to {tg_id} failed; will retry next cycle", "WARN")
                 break
             delivered += [r["key"] for r in batch]
             time.sleep(0.6)

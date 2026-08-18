@@ -210,6 +210,62 @@ s = botdb.stats()
 check("counts users", s["users"] >= 1)
 check("counts listings", s["listings"] == 4, s["listings"])
 
+
+print("\n=== 10. unreachable chats are parked, not retried forever ===")
+
+
+class FakeTG:
+    """Stands in for the Telegram client; records what was attempted."""
+
+    def __init__(self, error=None):
+        self.error = error
+        self.sent = 0
+
+    def send_checked(self, chat_id, text, reply_markup=None, preview=False):
+        if self.error:
+            return None, self.error
+        self.sent += 1
+        return {"message_id": self.sent}, None
+
+    def send(self, *a, **k):
+        return self.send_checked(*a, **k)[0]
+
+
+class FakeCfg(dict):
+    pass
+
+
+_cfg = {"telegram": {"bot_token": "x", "chat_id": "5520661044",
+                     "admin_chat_id": "5520661044"},
+        "runtime": {"max_items_per_message": 2}}
+_b = botmod.Bot(_cfg, lambda *a, **k: None)
+
+botdb.upsert_user({"id": 444, "first_name": "Stale"})
+botdb.set_user_field(444, "phone", "+998900000000")
+botdb.set_user_field(444, "state", "active")
+_rows = botdb.latest_for(444, None, 2)
+
+_b.tg = FakeTG(error=400)                      # chat not found
+got = _b.send_listings(444, _rows, "hdr")
+check("400 delivers nothing", got == [], got)
+check("400 parks the subscriber", botdb.get_user(444)["state"] == "new",
+      botdb.get_user(444)["state"])
+
+botdb.set_user_field(444, "state", "active")
+_b.tg = FakeTG(error=403)                      # user blocked the bot
+_b.send_listings(444, _rows, "hdr")
+check("403 parks the subscriber too", botdb.get_user(444)["state"] == "new")
+
+botdb.set_user_field(444, "state", "active")
+_b.tg = FakeTG(error=500)                      # transient server-side failure
+_b.send_listings(444, _rows, "hdr")
+check("500 leaves them active for a retry",
+      botdb.get_user(444)["state"] == "active", botdb.get_user(444)["state"])
+
+_b.tg = FakeTG()
+ok = _b.send_listings(444, _rows, "hdr")
+check("happy path returns delivered keys", len(ok) == len(_rows), ok)
+
 print("\n" + "=" * 46)
 print(f"  {PASS} passed, {FAIL} failed")
 print("=" * 46)

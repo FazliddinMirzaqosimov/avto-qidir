@@ -24,6 +24,14 @@ class Telegram:
 
     def call(self, method: str, timeout: int = 30, **params):
         """POST to the Bot API. Returns the `result` payload, or None on failure."""
+        return self.request(method, timeout=timeout, **params)[0]
+
+    def request(self, method: str, timeout: int = 30, **params):
+        """Like call(), but returns (result, error_code).
+
+        error_code is the Telegram/HTTP status when the call failed - the caller needs it
+        to tell "this chat is gone for good" (400/403) from "try again later".
+        """
         url = API.format(token=self.token, method=method)
         # Nested structures (keyboards) must travel as JSON strings.
         payload = {}
@@ -43,9 +51,9 @@ class Telegram:
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
                     body = json.loads(resp.read().decode("utf-8"))
                     if body.get("ok"):
-                        return body.get("result")
+                        return body.get("result"), None
                     self.log(f"Telegram {method} not ok: {body}", "WARN")
-                    return None
+                    return None, body.get("error_code")
             except urllib.error.HTTPError as exc:
                 detail = ""
                 try:
@@ -59,18 +67,26 @@ class Telegram:
                     continue
                 # 403 = user blocked the bot. Caller decides what to do; not retryable.
                 self.log(f"Telegram {method} HTTP {exc.code}: {detail}", "WARN")
-                return None
+                return None, exc.code
             except Exception as exc:  # noqa: BLE001
                 self.log(f"Telegram {method} failed: {type(exc).__name__}: {exc}", "WARN")
                 time.sleep(1.5 * (attempt + 1))
-        return None
+        return None, None
 
     # ------------------------------------------------------------------ helpers ---
 
     def send(self, chat_id, text, reply_markup=None, preview=False):
-        return self.call("sendMessage", chat_id=chat_id, text=text, parse_mode="HTML",
-                         disable_web_page_preview="false" if preview else "true",
-                         reply_markup=reply_markup)
+        return self.send_checked(chat_id, text, reply_markup, preview)[0]
+
+    def send_checked(self, chat_id, text, reply_markup=None, preview=False):
+        """sendMessage returning (result, error_code).
+
+        400 "chat not found" and 403 "bot was blocked" both mean this chat is
+        unreachable until the user starts the bot again - not a transient failure.
+        """
+        return self.request("sendMessage", chat_id=chat_id, text=text, parse_mode="HTML",
+                            disable_web_page_preview="false" if preview else "true",
+                            reply_markup=reply_markup)
 
     def edit(self, chat_id, message_id, text, reply_markup=None):
         return self.call("editMessageText", chat_id=chat_id, message_id=message_id,

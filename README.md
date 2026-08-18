@@ -1,10 +1,47 @@
 # 🔋 EV Hunter
 
-Hourly electric / plug-in-hybrid car scanner for Uzbek marketplaces. Watches **olx.uz,
-avtoelon.uz and avto.uz**, keeps the listings that match your price / year / mileage rules
-around Tashkent, and pushes the new ones to Telegram. It never sends the same ad twice.
+A multi-user Telegram bot that watches **olx.uz, avtoelon.uz and avto.uz** and pushes new
+car listings to every subscriber, filtered by the brands they picked.
 
 Python standard library only — no third-party packages anywhere in the image.
+
+---
+
+## The Telegram bot
+
+**For subscribers**
+
+| Command | What it does |
+|---|---|
+| `/start` | registers you, asks for your phone number, shows the newest listings and the brand picker |
+| `/brands` | pick which brands to follow — 113 of them, paginated, tap to toggle |
+| `/latest` | the newest listings matching your brands |
+| `/stop` | pause notifications (`/start` resumes) |
+| `/help` | command list |
+
+On `/start` the bot asks for the phone number with a `request_contact` button, so the
+number comes from Telegram itself rather than being typed. Registration only completes
+once it is shared.
+
+Picking **no** brands means you get everything.
+
+**For the admin**
+
+Whenever someone registers, the admin chat receives a formatted card:
+
+> 👤 **New user joined**
+> **Name** Alice A · **Username** @alice
+> **Phone** `+998901234567` · **ID** `111`
+> **Language** en · **Premium** ⭐ yes
+> **Joined** 2026-08-18 02:14 · **Status** ✅ active
+>
+> [ 🚫 Block ]
+
+The **Block / Unblock** button flips that user's access and edits the card in place. A
+blocked user receives no listings and is told their access is disabled. `/admin` prints
+subscriber stats and the roster.
+
+The admin id comes from `ADMIN_CHAT_ID` (falling back to `TELEGRAM_CHAT_ID`).
 
 ---
 
@@ -69,6 +106,7 @@ Two places, and they do different jobs:
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | from @BotFather |
 | `TELEGRAM_CHAT_ID` | your numeric chat id |
+| `ADMIN_CHAT_ID` | who receives new-user cards and can block/unblock (defaults to `TELEGRAM_CHAT_ID`) |
 | `EV_HUNTER_INTERVAL_MINUTES` | minutes between scans (default 60) |
 
 **`/data/config.json`** inside the `ev-hunter-data` volume — the search rules. Seeded from
@@ -135,11 +173,15 @@ URL is called dead. This is the one reason `curl` is installed in the image.
 
 ## How it avoids repeats
 
-Two independent layers:
+Delivery is tracked **per user**, so two subscribers following the same brand each get the
+ad exactly once:
 
-1. **SQLite `seen` table** in the volume remembers every ad id ever sent, forever.
-2. **`last_run`** is advanced only after a message is actually delivered. If Telegram is
-   unreachable, nothing is marked as seen and those cars are retried next hour.
+1. **`listings`** is the shared catalogue — every ad that ever passed the filters.
+2. **`user_sent`** records which subscriber received which listing.
+3. A failed send is simply not recorded, so it is retried on the next cycle rather than lost.
+
+Upgrading from the old single-chat version migrates the previous `seen` table into the
+catalogue and marks it delivered to the admin, so nobody gets a flood of repeats.
 
 Because the volume is separate from the code, `deploy.sh` can rebuild the image as often
 as you like without the bot forgetting anything or re-sending old ads.

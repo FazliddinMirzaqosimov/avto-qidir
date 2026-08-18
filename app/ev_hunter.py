@@ -86,7 +86,7 @@ def log(msg: str, level: str = "INFO") -> None:
 # --------------------------------------------------------------------------------------
 
 DEFAULT_CONFIG = {
-    "telegram": {"bot_token": "", "chat_id": ""},
+    "telegram": {"bot_token": "", "chat_id": "", "admin_chat_id": ""},
     "filters": {
         "max_price_usd": 15000,
         "min_year": 2022,
@@ -121,6 +121,7 @@ DEFAULT_CONFIG = {
         "usd_uzs_fallback_rate": 12800,
         "notify_on_source_failure": True,
         "catch_up_overlap_minutes": 120,
+        "max_new_per_user_per_cycle": 10,
     },
 }
 
@@ -147,6 +148,10 @@ def apply_env_overrides(cfg: dict) -> dict:
         cfg["telegram"]["bot_token"] = token.strip()
     if chat_id:
         cfg["telegram"]["chat_id"] = chat_id.strip()
+
+    admin = os.environ.get("ADMIN_CHAT_ID") or os.environ.get("TELEGRAM_ADMIN_ID")
+    if admin:
+        cfg["telegram"]["admin_chat_id"] = admin.strip()
 
     interval = os.environ.get("EV_HUNTER_INTERVAL_MINUTES")
     if interval and interval.strip().isdigit():
@@ -1853,3 +1858,47 @@ if __name__ == "__main__":
         sys.exit(main())
     except KeyboardInterrupt:
         sys.exit(0)
+
+
+# --------------------------------------------------------------------------------------
+# Multi-user support
+# --------------------------------------------------------------------------------------
+
+def collect_matches(cfg: dict) -> tuple[list, dict]:
+    """Scan every enabled source and return (matching listings, diagnostics).
+
+    Sends nothing and writes nothing. This is what the multi-user bot drives; run_scan()
+    above is still the single-chat CLI path used by --dry-run and friends.
+    """
+    rate = get_usd_rate(cfg)
+    all_listings: list[Listing] = []
+    failures: list[str] = []
+
+    for key, (label, fetcher) in SOURCES.items():
+        if not cfg["sources"].get(key, False):
+            continue
+        log(f"Fetching {label}…")
+        try:
+            result = fetcher(cfg, rate)
+        except Exception as exc:  # noqa: BLE001 - one broken site must not kill the run
+            log(f"  {label} crashed: {type(exc).__name__}: {exc}", "ERROR")
+            failures.append(label)
+            continue
+        if not result.ok or not result.listings:
+            log(f"  {label}: no data ({result.note})", "WARN")
+            failures.append(label)
+        else:
+            log(f"  {label}: {result.note}")
+        all_listings.extend(result.listings)
+
+    matches, rejected = [], {}
+    for listing in all_listings:
+        keep, tier, reason = evaluate(listing, cfg)
+        if keep:
+            matches.append((tier, listing))
+        else:
+            rejected[reason] = rejected.get(reason, 0) + 1
+
+    matches.sort(key=lambda pair: score(pair[1]))
+    log(f"Collected {len(all_listings)} raw listings, {len(matches)} match the filters.")
+    return matches, {"raw": len(all_listings), "failures": failures, "rejected": rejected}

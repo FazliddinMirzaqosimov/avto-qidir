@@ -37,4 +37,4 @@ HEALTHCHECK --interval=10m --timeout=20s --start-period=20m --retries=3 \
     CMD ["python", "/app/healthcheck.py"]
 
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["--loop"]
+CMD ["service"]

@@ -64,7 +64,7 @@
     "avtouz": true
   },
   "runtime": {
-    "interval_minutes": 60,
+    "interval_minutes": 10,
     "request_timeout_seconds": 25,
     "max_items_per_message": 8,
     "usd_uzs_fallback_rate": 12800,

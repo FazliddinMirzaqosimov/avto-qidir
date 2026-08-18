@@ -119,13 +119,14 @@ row = dict(botdb.latest_for(111, {"BYD"}, 1)[0])
 text = botmod.render_listing(row, 1)
 check("listing has link", "<a href=" in text)
 check("listing shows price", "$13 000" in text, text)
+check("listing mileage in Uzbek", "км" in text, text)
 check("listing shows brand", "BYD" in text)
 
 botdb.set_user_field(111, "phone", "+998901234567")
 card = botmod.render_user_card(botdb.get_user(111), "New user joined")
 check("card shows phone", "+998901234567" in card)
 check("card shows telegram id", "111" in card)
-check("card shows status", "active" in card or "BLOCKED" in card)
+check("card shows status", "фаол" in card or "БЛОКЛАНГАН" in card)
 check("html escaped in card",
       "&lt;" in botmod.render_user_card({"tg_id": 5, "first_name": "<b>x</b>"}))
 
@@ -149,11 +150,44 @@ ck = botmod.contact_keyboard()
 check("contact button requests contact",
       ck["keyboard"][0][0].get("request_contact") is True)
 ak = botmod.admin_keyboard(111, False)
-check("admin shows Block when active", "Block" in ak["inline_keyboard"][0][0]["text"])
+check("admin shows Block when active", "Блоклаш" in ak["inline_keyboard"][0][0]["text"])
 ak2 = botmod.admin_keyboard(111, True)
-check("admin shows Unblock when blocked", "Unblock" in ak2["inline_keyboard"][0][0]["text"])
+check("admin shows Unblock when blocked", "Блокдан" in ak2["inline_keyboard"][0][0]["text"])
 
-print("\n=== 8. stats ===")
+print("\n=== 8. everything user-facing is Uzbek Cyrillic ===")
+import re as _re  # noqa: E402
+
+CYR = _re.compile(r"[Ѐ-ӿ]")
+LATIN = _re.compile(r"[A-Za-z]{3,}")
+# Proper nouns and command names are expected to stay Latin.
+ALLOWED = {"EV", "Hunter", "olx", "avtoelon", "avto", "uz", "brands", "latest",
+           "stop", "start", "help", "code", "scope", "name"}
+
+not_translated = []
+for key, val in botmod.T.items():
+    if not isinstance(val, str) or not val.strip():
+        continue
+    bare = _re.sub(r"<[^>]+>", " ", val)          # strip HTML tags
+    bare = _re.sub(r"\{\w+\}", " ", bare)         # strip format placeholders
+    bare = _re.sub(r"/\w+", " ", bare)            # strip /commands
+    leftovers = [w for w in LATIN.findall(bare) if w not in ALLOWED]
+    if leftovers and not CYR.search(bare):
+        not_translated.append((key, leftovers))
+check("every T[] string is Cyrillic", not not_translated, not_translated)
+check("command menu is Cyrillic",
+      all(CYR.search(c["description"]) for c in botmod.BOT_COMMANDS))
+check("welcome is Cyrillic", CYR.search(botmod.T["welcome"]) is not None)
+check("phone button is Cyrillic",
+      CYR.search(botmod.contact_keyboard()["keyboard"][0][0]["text"]) is not None)
+_kb = botmod.brand_keyboard(111, 0)["inline_keyboard"]
+check("All/Clear/Done buttons are Cyrillic",
+      all(CYR.search(b["text"]) for r in _kb[-2:] for b in r))
+check("user card labels are Cyrillic",
+      "Телефон" in card and "Ҳолат" in card)
+check("no leftover English in the paused/help text",
+      CYR.search(botmod.T["paused"]) and CYR.search(botmod.T["help"]))
+
+print("\n=== 9. stats ===")
 s = botdb.stats()
 check("counts users", s["users"] >= 1)
 check("counts listings", s["listings"] == 3, s["listings"])

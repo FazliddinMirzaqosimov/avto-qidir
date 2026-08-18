@@ -49,9 +49,8 @@ def scan_cycle(cfg: dict, bot: botmod.Bot) -> None:
         rows = botdb.undelivered_for(user["tg_id"], chosen, per_user)
         if not rows:
             continue
-        scope = ", ".join(sorted(chosen)) if chosen else "all brands"
-        header = (f"🚘 <b>{len(rows)} new listing{'s' if len(rows) != 1 else ''}</b>\n"
-                  f"<i>{botmod.esc(scope)}</i>")
+        scope = ", ".join(sorted(chosen)) if chosen else botmod.T["all_brands_scope"]
+        header = botmod.T["new_header"].format(n=len(rows), scope=botmod.esc(scope))
         delivered = bot.send_listings(user["tg_id"], rows, header)
         botdb.mark_sent(user["tg_id"], delivered)
         if delivered:

@@ -91,7 +91,7 @@ DEFAULT_CONFIG = {
         "max_price_usd": 15000,
         "min_year": 2022,
         "ideal_max_mileage_km": 50000,
-        "hard_max_mileage_km": 100000,
+        "hard_max_mileage_km": 150000,
         "regions": ["tashkent", "toshkent", "ташкент", "тошкент"],
         "first_run_backfill_days": 7,
         "max_owners": 0,
@@ -1408,6 +1408,24 @@ def in_target_region(listing: Listing, regions: list[str]) -> bool:
     return not listing.city
 
 
+# Listings are grouped by how far they have run. The bands are shared by the filter,
+# the database and the Telegram renderer so a car cannot land in two different groups.
+MILEAGE_BANDS = (
+    ("under50",  50_000),
+    ("under100", 100_000),
+    ("under150", 150_000),
+)
+
+
+def mileage_tier(km: int | None) -> str:
+    if km is None:
+        return "unknown"
+    for name, ceiling in MILEAGE_BANDS:
+        if km < ceiling:
+            return name
+    return "unknown"
+
+
 def evaluate(listing: Listing, cfg: dict) -> tuple[bool, str, str]:
     """Return (keep, tier, reason). tier is 'top' or 'stretch'."""
     filters = cfg["filters"]
@@ -1419,9 +1437,9 @@ def evaluate(listing: Listing, cfg: dict) -> tuple[bool, str, str]:
         if norm(word) and norm(word) in listing.blob:
             return False, "", f"excluded keyword '{word}'"
 
-    powertrain = classify_powertrain(listing)
-    if powertrain is None:
-        return False, "", "not electric/PHEV"
+    # Powertrain is no longer a gate - every kind of car qualifies. It is still
+    # classified, because the renderer shows a different icon for electrics.
+    powertrain = classify_powertrain(listing) or "ICE"
 
     if listing.year is not None and listing.year < filters["min_year"]:
         return False, "", f"year {listing.year} < {filters['min_year']}"
@@ -1443,13 +1461,8 @@ def evaluate(listing: Listing, cfg: dict) -> tuple[bool, str, str]:
     if not in_target_region(listing, filters["regions"]):
         return False, "", f"outside Tashkent ({listing.city[:40]})"
 
-    tier = "top"
-    if listing.mileage_km is not None and listing.mileage_km > filters["ideal_max_mileage_km"]:
-        tier = "stretch"
-    if listing.year is None or listing.price_usd is None:
-        tier = "stretch"
     listing.fuel = listing.fuel or powertrain
-    return True, tier, powertrain
+    return True, mileage_tier(listing.mileage_km), powertrain
 
 
 def score(listing: Listing) -> tuple:

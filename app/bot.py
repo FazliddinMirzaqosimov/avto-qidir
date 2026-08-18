@@ -67,8 +67,43 @@ T = {
     "mileage_na": "юриши номаълум",
     "km_new": "0 км (янги)",
     "listing_fallback": "Эълон",
-    "stretch": "⚠️ чегарадаги мослик — маълумотларни текширинг",
+    "band_under50":  "<b>━━ 🥇 50 000 км гача ━━</b>",
+    "band_under100": "<b>━━ 🥈 50 000 – 100 000 км ━━</b>",
+    "band_under150": "<b>━━ 🥉 100 000 – 150 000 км ━━</b>",
+    "band_unknown":  "<b>━━ ❔ Юриши кўрсатилмаган ━━</b>",
+    "ice": "⛽",
+    "ev": "🔋",
 }
+
+# Mileage bands, mirrored from ev_hunter.mileage_tier so the grouping in the message
+# always matches the grouping the filter assigned.
+BAND_ORDER = {"under50": 0, "under100": 1, "under150": 2, "unknown": 3}
+BAND_TITLES = {
+    "under50":  T["band_under50"],
+    "under100": T["band_under100"],
+    "under150": T["band_under150"],
+    "unknown":  T["band_unknown"],
+}
+
+
+def band_of(row: dict) -> str:
+    """Derive the band from the mileage itself.
+
+    Deliberately not trusting the stored `tier`: rows catalogued before the bands
+    existed carry legacy values like "top"/"stretch", and recomputing keeps them
+    grouped correctly without a migration.
+    """
+    km = row.get("mileage_km")
+    if km is None:
+        return "unknown"
+    if km < 50_000:
+        return "under50"
+    if km < 100_000:
+        return "under100"
+    if km <= 150_000:
+        return "under150"
+    return "unknown"
+
 
 BOT_COMMANDS = [
     {"command": "latest", "description": "Энг сўнгги эълонлар"},
@@ -94,7 +129,10 @@ def fmt_km(value) -> str:
 def render_listing(row: dict, index: int | None = None) -> str:
     head = f"<b>{index}.</b> " if index else ""
     title = esc((row.get("title") or T["listing_fallback"])[:90])
-    lines = [f"{head}🔋 <a href=\"{esc(row.get('url'))}\">{title}</a>"]
+    fuel = str(row.get("fuel") or "").lower()
+    icon = T["ev"] if any(w in fuel for w in ("ev", "phev", "electr", "электро",
+                                              "elektr")) else T["ice"]
+    lines = [f"{head}{icon} <a href=\"{esc(row.get('url'))}\">{title}</a>"]
 
     facts = [f"💵 <b>{fmt_money(row.get('price_usd'))}</b>"]
     if row.get("year"):
@@ -109,8 +147,7 @@ def render_listing(row: dict, index: int | None = None) -> str:
         extras.append(f"📍 {esc(str(row['city'])[:40])}")
     extras.append(f"🏷 {esc(row.get('source') or '')}")
     lines.append("      " + "  ·  ".join(extras))
-    if row.get("tier") == "stretch":
-        lines.append(f"      <i>{T['stretch']}</i>")
+    # No per-listing warning any more - the mileage band heading carries that meaning.
     return "\n".join(lines)
 
 
@@ -206,14 +243,31 @@ class Bot:
     UNREACHABLE = (400, 403)
 
     def send_listings(self, tg_id: int, rows: list[dict], header: str) -> list[str]:
-        """Send listings in chunks. Returns the keys actually delivered."""
+        """Send listings grouped by mileage band. Returns the keys actually delivered."""
         delivered: list[str] = []
         chunk = max(1, self.max_per_push)
-        for start in range(0, len(rows), chunk):
-            batch = rows[start:start + chunk]
+
+        # Order by band first, then by the ranking the query already applied, so each
+        # band is contiguous and its heading is emitted exactly once per message.
+        ordered = sorted(rows, key=lambda r: BAND_ORDER.get(band_of(r), 99))
+
+        blocks: list[tuple[str, dict]] = []      # (band, row)
+        for row in ordered:
+            blocks.append((band_of(row), row))
+
+        counter = 0
+        current_band = None
+        for start in range(0, len(blocks), chunk):
+            batch = blocks[start:start + chunk]
             parts = [header] if start == 0 else [T["continued"]]
-            for offset, row in enumerate(batch, start=start + 1):
-                parts.append(render_listing(row, offset))
+            # A message that continues mid-band still needs the heading for context.
+            current_band = None
+            for band, row in batch:
+                if band != current_band:
+                    parts.append(BAND_TITLES[band])
+                    current_band = band
+                counter += 1
+                parts.append(render_listing(row, counter))
             result, error = self.tg.send_checked(tg_id, "\n\n".join(parts))
             if result is None:
                 if error in self.UNREACHABLE:
@@ -223,7 +277,7 @@ class Bot:
                 else:
                     self.log(f"delivery to {tg_id} failed; will retry next cycle", "WARN")
                 break
-            delivered += [r["key"] for r in batch]
+            delivered += [row["key"] for _band, row in batch]
             time.sleep(0.6)
         return delivered
 

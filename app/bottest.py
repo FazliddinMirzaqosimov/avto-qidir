@@ -266,6 +266,63 @@ _b.tg = FakeTG()
 ok = _b.send_listings(444, _rows, "hdr")
 check("happy path returns delivered keys", len(ok) == len(_rows), ok)
 
+print("\n=== 11. mileage-band grouping in the message ===")
+
+
+class CaptureTG:
+    def __init__(self):
+        self.msgs = []
+
+    def send_checked(self, chat_id, text, reply_markup=None, preview=False):
+        self.msgs.append(text)
+        return {"message_id": len(self.msgs)}, None
+
+    def send(self, *a, **k):
+        return self.send_checked(*a, **k)[0]
+
+
+check("band_of <50k", botmod.band_of({"mileage_km": 12000}) == "under50")
+check("band_of 50k boundary", botmod.band_of({"mileage_km": 50000}) == "under100")
+check("band_of 100k boundary", botmod.band_of({"mileage_km": 100000}) == "under150")
+check("band_of none", botmod.band_of({"mileage_km": None}) == "unknown")
+check("legacy tier row grouped by km, not by stored tier",
+      botmod.band_of({"mileage_km": 70000, "tier": "stretch"}) == "under100")
+
+_cfg2 = {"telegram": {"bot_token": "x", "chat_id": "1", "admin_chat_id": "1"},
+         "runtime": {"max_items_per_message": 50}}
+_b2 = botmod.Bot(_cfg2, lambda *a, **k: None)
+_b2.tg = CaptureTG()
+mixed = [
+    {"key": "a", "title": "High km", "url": "u", "price_usd": 9000, "year": 2022,
+     "mileage_km": 130000, "brand": "Chevrolet", "source": "OLX", "fuel": "benzin"},
+    {"key": "b", "title": "Low km", "url": "u", "price_usd": 14000, "year": 2025,
+     "mileage_km": 9000, "brand": "BYD", "source": "OLX", "fuel": "EV"},
+    {"key": "c", "title": "No km", "url": "u", "price_usd": 11000, "year": 2023,
+     "mileage_km": None, "brand": "Kia", "source": "OLX", "fuel": "benzin"},
+    {"key": "d", "title": "Mid km", "url": "u", "price_usd": 12000, "year": 2024,
+     "mileage_km": 70000, "brand": "Chery", "source": "OLX", "fuel": "benzin"},
+]
+sent = _b2.send_listings(1, mixed, "HDR")
+body = _b2.tg.msgs[0]
+check("all four delivered", len(sent) == 4, sent)
+check("all band headings present",
+      all(h in body for h in (botmod.T["band_under50"], botmod.T["band_under100"],
+                              botmod.T["band_under150"], botmod.T["band_unknown"])))
+order = [body.index(botmod.T[k]) for k in
+         ("band_under50", "band_under100", "band_under150", "band_unknown")]
+check("bands ordered best mileage first", order == sorted(order), order)
+check("petrol listing shows fuel-pump icon", "\u26fd" in body)
+check("electric listing shows battery icon", "\U0001f50b" in body)
+check("numbering continuous 1..4",
+      all(f"<b>{i}.</b>" in body for i in (1, 2, 3, 4)))
+
+_b2.tg = CaptureTG()
+_b2.max_per_push = 2
+_b2.send_listings(1, mixed, "HDR")
+check("splits into two messages", len(_b2.tg.msgs) == 2, len(_b2.tg.msgs))
+check("continuation repeats a heading for context",
+      any(h in _b2.tg.msgs[1] for h in botmod.BAND_TITLES.values()))
+
 print("\n" + "=" * 46)
 print(f"  {PASS} passed, {FAIL} failed")
 print("=" * 46)

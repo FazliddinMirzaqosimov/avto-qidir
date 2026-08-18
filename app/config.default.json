@@ -8,7 +8,7 @@
     "max_price_usd": 17000,
     "min_year": 2022,
     "ideal_max_mileage_km": 50000,
-    "hard_max_mileage_km": 100000,
+    "hard_max_mileage_km": 150000,
     "first_run_backfill_days": 7,
     "regions": [
       "tashkent",
@@ -53,7 +53,8 @@
     ],
     "max_age_days": 0,
     "_min_mileage_note": "0 disables the check. Set to 1 to hide '0 km' dealer/import ads - that was previously dropping ~120 listings per scan.",
-    "min_mileage_km": 0
+    "min_mileage_km": 0,
+    "_powertrain_note": "All fuel types are accepted - petrol, diesel, hybrid and electric."
   },
   "sources": {
     "olx": true,

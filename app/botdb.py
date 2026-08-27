@@ -58,6 +58,15 @@ CREATE TABLE IF NOT EXISTS user_brands (
     PRIMARY KEY (tg_id, brand)
 );
 
+-- Optional narrowing inside a chosen brand. No row for a brand means "every model of
+-- it", so subscribers who never open the model picker keep their existing behaviour.
+CREATE TABLE IF NOT EXISTS user_models (
+    tg_id INTEGER NOT NULL,
+    brand TEXT NOT NULL,
+    model TEXT NOT NULL,
+    PRIMARY KEY (tg_id, brand, model)
+);
+
 CREATE TABLE IF NOT EXISTS listings (
     key        TEXT PRIMARY KEY,
     source     TEXT,
@@ -71,6 +80,7 @@ CREATE TABLE IF NOT EXISTS listings (
     fuel       TEXT,
     owners     INTEGER,
     brand      TEXT,
+    model      TEXT,
     tier       TEXT,
     posted_at  TEXT,
     first_seen TEXT
@@ -86,6 +96,7 @@ CREATE TABLE IF NOT EXISTS user_sent (
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 
 CREATE INDEX IF NOT EXISTS idx_listings_brand ON listings(brand);
+CREATE INDEX IF NOT EXISTS idx_user_models_u   ON user_models(tg_id);
 CREATE INDEX IF NOT EXISTS idx_listings_seen  ON listings(first_seen);
 CREATE INDEX IF NOT EXISTS idx_user_sent_user ON user_sent(tg_id);
 """
@@ -96,6 +107,11 @@ def init(admin_id: int | None = None) -> None:
         conn = connect()
         try:
             conn.executescript(SCHEMA)
+            # Older databases predate the model column; CREATE TABLE IF NOT
+            # EXISTS will not add it, so widen the table in place.
+            cols = {r[1] for r in conn.execute('PRAGMA table_info(listings)')}
+            if 'model' not in cols:
+                conn.execute('ALTER TABLE listings ADD COLUMN model TEXT')
             # The single-chat version kept a `seen` table. Carry those ad keys over so the
             # admin is not re-sent 200+ listings they already received.
             has_seen = conn.execute(
@@ -266,7 +282,8 @@ def set_brands(tg_id: int, brands: list[str]) -> None:
 
 # ------------------------------------------------------------------------ listings ---
 
-def upsert_listing(listing, brand: str | None, tier: str) -> bool:
+def upsert_listing(listing, brand: str | None, tier: str,
+                   model: str | None = None) -> bool:
     """Store a matched listing. Returns True if it was not in the catalogue before."""
     with _WRITE_LOCK:
         conn = connect()
@@ -275,11 +292,11 @@ def upsert_listing(listing, brand: str | None, tier: str) -> bool:
                                   (listing.key,)).fetchone()
             conn.execute(
                 "INSERT OR IGNORE INTO listings(key,source,ad_id,url,title,price_usd,year,"
-                "mileage_km,city,fuel,owners,brand,tier,posted_at,first_seen) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "mileage_km,city,fuel,owners,brand,model,tier,posted_at,first_seen) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (listing.key, listing.source, listing.ad_id, listing.url, listing.title,
                  listing.price_usd, listing.year, listing.mileage_km, listing.city,
-                 listing.fuel, listing.owners, brand, tier,
+                 listing.fuel, listing.owners, brand, model, tier,
                  listing.posted_at.isoformat() if listing.posted_at else None, now_iso()))
 
             # Rows carried over from the old single-chat `seen` table have no brand, year
@@ -287,16 +304,104 @@ def upsert_listing(listing, brand: str | None, tier: str) -> bool:
             # a subscriber would see an empty feed until brand-new ads appeared.
             # COALESCE keeps whatever is already there and only fills the gaps.
             conn.execute(
-                "UPDATE listings SET brand=COALESCE(brand,?), tier=COALESCE(tier,?), "
+                "UPDATE listings SET brand=COALESCE(brand,?), model=COALESCE(model,?), "
+                "tier=COALESCE(tier,?), "
                 "year=COALESCE(year,?), mileage_km=COALESCE(mileage_km,?), "
                 "city=COALESCE(NULLIF(city,''),?), fuel=COALESCE(NULLIF(fuel,''),?), "
                 "owners=COALESCE(owners,?) WHERE key=?",
-                (brand, tier, listing.year, listing.mileage_km, listing.city,
+                (brand, model, tier, listing.year, listing.mileage_km, listing.city,
                  listing.fuel, listing.owners, listing.key))
             conn.commit()
             return exists is None
         finally:
             conn.close()
+
+
+# -------------------------------------------------------------- model subscriptions ---
+
+def get_models(tg_id: int, brand: str | None = None) -> dict[str, set[str]]:
+    """{brand: {models}} for this user. A brand absent here means "all its models"."""
+    conn = connect()
+    try:
+        if brand:
+            rows = conn.execute(
+                "SELECT brand, model FROM user_models WHERE tg_id=? AND brand=?",
+                (tg_id, brand)).fetchall()
+        else:
+            rows = conn.execute("SELECT brand, model FROM user_models WHERE tg_id=?",
+                                (tg_id,)).fetchall()
+        out: dict[str, set[str]] = {}
+        for r in rows:
+            out.setdefault(r["brand"], set()).add(r["model"])
+        return out
+    finally:
+        conn.close()
+
+
+def toggle_model(tg_id: int, brand: str, model: str) -> bool:
+    """Flip one model on or off. Returns True when it is now selected."""
+    with _WRITE_LOCK:
+        conn = connect()
+        try:
+            hit = conn.execute(
+                "SELECT 1 FROM user_models WHERE tg_id=? AND brand=? AND model=?",
+                (tg_id, brand, model)).fetchone()
+            if hit:
+                conn.execute(
+                    "DELETE FROM user_models WHERE tg_id=? AND brand=? AND model=?",
+                    (tg_id, brand, model))
+                selected = False
+            else:
+                conn.execute(
+                    "INSERT OR IGNORE INTO user_models(tg_id,brand,model) VALUES(?,?,?)",
+                    (tg_id, brand, model))
+                selected = True
+            # Narrowing a brand only makes sense if the brand itself is subscribed.
+            conn.execute("INSERT OR IGNORE INTO user_brands(tg_id,brand) VALUES(?,?)",
+                         (tg_id, brand))
+            conn.commit()
+            return selected
+        finally:
+            conn.close()
+
+
+def clear_models(tg_id: int, brand: str) -> None:
+    """Drop the narrowing for one brand, i.e. go back to every model of it."""
+    with _WRITE_LOCK:
+        conn = connect()
+        try:
+            conn.execute("DELETE FROM user_models WHERE tg_id=? AND brand=?", (tg_id, brand))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def set_models(tg_id: int, brand: str, models: list[str]) -> None:
+    with _WRITE_LOCK:
+        conn = connect()
+        try:
+            conn.execute("DELETE FROM user_models WHERE tg_id=? AND brand=?", (tg_id, brand))
+            conn.executemany(
+                "INSERT OR IGNORE INTO user_models(tg_id,brand,model) VALUES(?,?,?)",
+                [(tg_id, brand, m) for m in models])
+            if models:
+                conn.execute("INSERT OR IGNORE INTO user_brands(tg_id,brand) VALUES(?,?)",
+                             (tg_id, brand))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _model_clause(tg_id: int, alias: str = "l.") -> tuple[str, list]:
+    """SQL restricting rows to the models a user picked, per brand.
+
+    A brand with no rows in user_models is unrestricted, so the two halves of the OR
+    read as "this brand was never narrowed" or "this row is one of the chosen models".
+    """
+    return (f" AND ({alias}brand NOT IN (SELECT brand FROM user_models WHERE tg_id=?)"
+            f"      OR {alias}model IN (SELECT model FROM user_models"
+            f"                          WHERE tg_id=? AND brand={alias}brand)) ",
+            [tg_id, tg_id])
 
 
 def undelivered_for(tg_id: int, brands: set[str] | None, limit: int) -> list[dict]:
@@ -313,6 +418,9 @@ def undelivered_for(tg_id: int, brands: set[str] | None, limit: int) -> list[dic
         if brands:
             sql += "AND l.brand IN (%s) " % ",".join("?" * len(brands))
             params += sorted(brands)
+            clause, clause_params = _model_clause(tg_id, "l.")
+            sql += clause
+            params += clause_params
         sql += "ORDER BY l.first_seen DESC, l.price_usd ASC LIMIT ?"
         params.append(limit)
         return [dict(r) for r in conn.execute(sql, params).fetchall()]
@@ -329,6 +437,9 @@ def latest_for(tg_id: int, brands: set[str] | None, limit: int) -> list[dict]:
         if brands:
             sql += "AND brand IN (%s) " % ",".join("?" * len(brands))
             params += sorted(brands)
+            clause, clause_params = _model_clause(tg_id, "")
+            sql += clause
+            params += clause_params
         sql += "ORDER BY first_seen DESC, price_usd ASC LIMIT ?"
         params.append(limit)
         return [dict(r) for r in conn.execute(sql, params).fetchall()]

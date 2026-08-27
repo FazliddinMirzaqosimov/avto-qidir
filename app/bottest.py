@@ -323,6 +323,104 @@ check("splits into two messages", len(_b2.tg.msgs) == 2, len(_b2.tg.msgs))
 check("continuation repeats a heading for context",
       any(h in _b2.tg.msgs[1] for h in botmod.BAND_TITLES.values()))
 
+print("\n=== 12. model catalogue and detection ===")
+import models as modellib  # noqa: E402
+
+check("catalogue covers many brands", len(modellib.MODELS) >= 20, len(modellib.MODELS))
+check("BYD has models", modellib.has_models("BYD"))
+check("brand without models is honest", not modellib.has_models("Rivian"))
+check("Seagull detected", modellib.detect_model("BYD", "BYD Seagull 2026 full") == "Seagull")
+check("Onix detected", modellib.detect_model("Chevrolet", "Chevrolet Onix 2023") == "Onix")
+check("Cobalt detected", modellib.detect_model("Chevrolet", "Cobalt LT 2022") == "Cobalt")
+check("longest alias wins (Yuan Plus over Yuan Up)",
+      modellib.detect_model("BYD", "Byd Yuan Plus 2024") == "Yuan Plus / Atto 3")
+check("wrong brand yields nothing",
+      modellib.detect_model("Chevrolet", "BYD Seagull 2026") is None)
+check("unknown brand yields nothing", modellib.detect_model(None, "Onix") is None)
+check("model index round-trip",
+      modellib.model_by_index("BYD", modellib.model_index("BYD", "Dolphin")) == "Dolphin")
+
+print("\n=== 13. model subscriptions filter delivery ===")
+botdb.set_brands(777, ["BYD", "Chevrolet"])
+m1 = FakeListing("OLX:m1", "BYD Seagull 2026", 13000)
+m2 = FakeListing("OLX:m2", "BYD Dolphin 2024", 14000)
+m3 = FakeListing("OLX:m3", "Chevrolet Onix 2023", 12000)
+botdb.upsert_listing(m1, "BYD", "under50", "Seagull")
+botdb.upsert_listing(m2, "BYD", "under50", "Dolphin")
+botdb.upsert_listing(m3, "Chevrolet", "under50", "Onix")
+
+allrows = {r["key"] for r in botdb.undelivered_for(777, {"BYD", "Chevrolet"}, 20)}
+check("no narrowing means every model of the chosen brands",
+      {"OLX:m1", "OLX:m2", "OLX:m3"} <= allrows, sorted(allrows))
+
+check("toggle_model returns True when selected",
+      botdb.toggle_model(777, "BYD", "Seagull") is True)
+narrowed = {r["key"] for r in botdb.undelivered_for(777, {"BYD", "Chevrolet"}, 20)}
+check("narrowed brand keeps only the chosen model", "OLX:m1" in narrowed)
+check("other model of the narrowed brand drops out", "OLX:m2" not in narrowed)
+check("un-narrowed brand is unaffected", "OLX:m3" in narrowed)
+
+check("toggle off returns False", botdb.toggle_model(777, "BYD", "Seagull") is False)
+check("clearing restores every model",
+      "OLX:m2" in {r["key"] for r in botdb.undelivered_for(777, {"BYD", "Chevrolet"}, 20)})
+
+botdb.set_models(777, "BYD", ["Dolphin"])
+only = {r["key"] for r in botdb.undelivered_for(777, {"BYD", "Chevrolet"}, 20)}
+check("set_models replaces the selection", "OLX:m2" in only and "OLX:m1" not in only)
+botdb.clear_models(777, "BYD")
+check("clear_models widens again",
+      "OLX:m1" in {r["key"] for r in botdb.undelivered_for(777, {"BYD", "Chevrolet"}, 20)})
+
+check("selecting a model subscribes the brand too",
+      (botdb.toggle_model(888, "Chevrolet", "Onix") is True)
+      and "Chevrolet" in botdb.get_brands(888))
+check("/latest honours the narrowing",
+      all(r["model"] in (None, "Onix") or r["brand"] != "Chevrolet"
+          for r in botdb.latest_for(888, {"Chevrolet"}, 20)))
+
+print("\n=== 14. model picker keyboards ===")
+botdb.set_brands(999, ["BYD", "Rivian"])
+row = botmod.models_button_row(999)
+check("Models button appears when a brand has models",
+      row and row[0]["callback_data"] == "mods")
+botdb.set_brands(999, ["Rivian"])
+check("Models button hidden when no brand has models", botmod.models_button_row(999) == [])
+
+botdb.set_brands(999, ["BYD", "Chevrolet"])
+mbk = botmod.model_brand_keyboard(999)["inline_keyboard"]
+check("brand chooser lists both brands",
+      sum(1 for r in mbk for b in r if b["callback_data"].startswith("mb:")) == 2)
+check("brand chooser has a back button",
+      any(b["callback_data"] == "p:0" for r in mbk for b in r))
+
+botdb.toggle_model(999, "BYD", "Seagull")
+mk = botmod.model_keyboard(999, "BYD")["inline_keyboard"]
+check("selected model is ticked",
+      any("✅" in b["text"] and "Seagull" in b["text"] for r in mk for b in r))
+check("model callbacks fit in 64 bytes",
+      all(len(b.get("callback_data", "").encode()) <= 64 for r in mk for b in r))
+check("model keyboard has all-models and done",
+      any(b["callback_data"].startswith("mall:") for r in mk for b in r)
+      and any(b["callback_data"] == "done" for r in mk for b in r))
+botdb.toggle_model(999, "BYD", "Dolphin")
+mbk2 = botmod.model_brand_keyboard(999)["inline_keyboard"]
+check("brand chooser shows how many models are picked",
+      any("BYD (2)" in b["text"] for r in mbk2 for b in r),
+      [b["text"] for r in mbk2 for b in r])
+
+_cfg3 = {"telegram": {"bot_token": "x", "chat_id": "1", "admin_chat_id": "1"},
+         "runtime": {"max_items_per_message": 5}}
+_b3 = botmod.Bot(_cfg3, lambda *a, **k: None)
+summary = _b3.scope_summary(999)
+check("summary names the narrowed models",
+      "Seagull" in summary and "Dolphin" in summary, summary)
+check("scope_text is compact", "BYD" in _b3.scope_text(999, botdb.get_brands(999)))
+
+print("\n=== 15. the announcement is Uzbek Cyrillic ===")
+check("announce is Cyrillic", CYR.search(botmod.T["announce"]) is not None)
+check("announce mentions models", "модел" in botmod.T["announce"].lower())
+check("announce points at /brands", "/brands" in botmod.T["announce"])
+
 print("\n" + "=" * 46)
 print(f"  {PASS} passed, {FAIL} failed")
 print("=" * 46)

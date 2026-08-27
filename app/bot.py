@@ -12,6 +12,7 @@ import time
 
 import botdb
 import brands as brandlib
+import models as modellib
 from telegram_api import Telegram, esc
 
 BRANDS_PER_PAGE = 12          # 6 rows of 2 - fits without scrolling on a phone
@@ -67,6 +68,25 @@ T = {
     "mileage_na": "юриши номаълум",
     "km_new": "0 км (янги)",
     "listing_fallback": "Эълон",
+    "models_btn": "🚙 Моделлар",
+    "model_prompt": ("🚙 <b>{brand}</b> — қайси моделлар керак?\n"
+                     "<i>Ҳеч бири танланмаса, ушбу бренднинг барча моделлари юборилади.</i>"),
+    "pick_brand_first": "Аввал камида битта брендни танланг.",
+    "choose_brand_for_models": ("🚙 <b>Модел танлаш</b>\n"
+                                "<i>Қайси бренд ичидан модел танламоқчисиз?</i>"),
+    "no_models": "Бу бренд учун моделлар рўйхати ҳозирча йўқ — барча эълонлар юборилади.",
+    "back": "◀️ Орқага",
+    "all_models": "🌍 Барча моделлар",
+    "model_added": "{name} қўшилди",
+    "model_removed": "{name} олиб ташланди",
+    "models_cleared": "Барча моделлар (чеклов олиб ташланди)",
+    "announce": (
+        "🎉 <b>Янгилик: модел бўйича фильтр қўшилди!</b>\n\n"
+        "Энди фақат брендни эмас, аниқ <b>моделни</b> ҳам танлашингиз мумкин — "
+        "масалан, Chevrolet ичидан фақат <b>Onix</b>, ёки BYD ичидан фақат "
+        "<b>Seagull</b>.\n\n"
+        "Фильтрни тезроқ ва аниқроқ созлаш учун ҳозироқ синаб кўринг 👇\n"
+        "/brands — брендни танланг, сўнг <b>🚙 Моделлар</b> тугмасини босинг."),
     "band_under50":  "<b>━━ 🥇 50 000 км гача ━━</b>",
     "band_under100": "<b>━━ 🥈 50 000 – 100 000 км ━━</b>",
     "band_under150": "<b>━━ 🥉 100 000 – 150 000 км ━━</b>",
@@ -108,6 +128,7 @@ def band_of(row: dict) -> str:
 BOT_COMMANDS = [
     {"command": "latest", "description": "Энг сўнгги эълонлар"},
     {"command": "brands", "description": "Брендларни танлаш"},
+    {"command": "models", "description": "Моделларни танлаш"},
     {"command": "stop", "description": "Хабарларни тўхтатиш"},
     {"command": "start", "description": "Қайта бошлаш"},
     {"command": "help", "description": "Ёрдам"},
@@ -206,7 +227,56 @@ def brand_keyboard(tg_id: int, page: int = 0) -> dict:
 
     rows.append([{"text": T["all_brands"], "callback_data": f"all:{page}"},
                  {"text": T["clear"], "callback_data": f"none:{page}"}])
+    models_row = models_button_row(tg_id)
+    if models_row:
+        rows.append(models_row)
     rows.append([{"text": T["done"], "callback_data": "done"}])
+    return {"inline_keyboard": rows}
+
+
+def models_button_row(tg_id: int) -> list[dict]:
+    """The drill-down entry point, shown only once a brand with models is selected."""
+    chosen = botdb.get_brands(tg_id)
+    if any(modellib.has_models(b) for b in chosen):
+        return [{"text": T["models_btn"], "callback_data": "mods"}]
+    return []
+
+
+def model_brand_keyboard(tg_id: int) -> dict:
+    """Which of the user's brands to drill into."""
+    chosen = sorted(b for b in botdb.get_brands(tg_id) if modellib.has_models(b))
+    picked = botdb.get_models(tg_id)
+    rows, row = [], []
+    for name in chosen:
+        n = len(picked.get(name, ()))
+        label = f"{name} ({n})" if n else name
+        row.append({"text": label, "callback_data": f"mb:{brandlib.brand_id(name)}"})
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([{"text": T["back"], "callback_data": "p:0"}])
+    return {"inline_keyboard": rows}
+
+
+def model_keyboard(tg_id: int, brand: str) -> dict:
+    """Models of one brand, ticked where the user selected them."""
+    picked = botdb.get_models(tg_id, brand).get(brand, set())
+    rows, row = [], []
+    for idx, name in enumerate(modellib.models_for(brand)):
+        mark = "✅ " if name in picked else ""
+        row.append({"text": f"{mark}{name}",
+                    "callback_data": f"m:{brandlib.brand_id(brand)}:{idx}"})
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([{"text": T["all_models"],
+                  "callback_data": f"mall:{brandlib.brand_id(brand)}"}])
+    rows.append([{"text": T["back"], "callback_data": "mods"},
+                 {"text": T["done"], "callback_data": "done"}])
     return {"inline_keyboard": rows}
 
 
@@ -327,6 +397,15 @@ class Bot:
             self.cmd_latest(chat_id, user)
             self.tg.send(chat_id, T["brand_prompt"],
                          reply_markup=brand_keyboard(tg_user["id"], 0))
+        elif command in ("models", "model"):
+            chosen = [b for b in botdb.get_brands(tg_user["id"]) if modellib.has_models(b)]
+            if not chosen:
+                self.tg.send(chat_id, T["pick_brand_first"])
+                self.tg.send(chat_id, T["brand_prompt"],
+                             reply_markup=brand_keyboard(tg_user["id"], 0))
+            else:
+                self.tg.send(chat_id, T["choose_brand_for_models"],
+                             reply_markup=model_brand_keyboard(tg_user["id"]))
         elif command in ("brands", "cars", "mycars"):
             self.tg.send(chat_id, T["brand_prompt"],
                          reply_markup=brand_keyboard(tg_user["id"], 0))
@@ -342,13 +421,36 @@ class Bot:
         else:
             self.tg.send(chat_id, T["unknown"])
 
+    def scope_text(self, tg_id: int, chosen: set) -> str:
+        if not chosen:
+            return T["all_brands_scope"]
+        picked = botdb.get_models(tg_id)
+        parts = []
+        for brand in sorted(chosen):
+            models = sorted(picked.get(brand, ()))
+            parts.append(f"{brand}: {', '.join(models)}" if models else brand)
+        return ", ".join(parts)
+
+    def scope_summary(self, tg_id: int) -> str:
+        """Human-readable description of what this user is subscribed to."""
+        chosen = botdb.get_brands(tg_id)
+        if not chosen:
+            return T["saved"].format(scope=esc(T["every_brand"]))
+        picked = botdb.get_models(tg_id)
+        parts = []
+        for brand in sorted(chosen):
+            models = sorted(picked.get(brand, ()))
+            parts.append(f"{brand} ({', '.join(models)})" if models else brand)
+        return T["saved"].format(scope=esc(", ".join(parts)))
+
+
     def cmd_latest(self, chat_id: int, user: dict) -> None:
         chosen = botdb.get_brands(user["tg_id"])
         rows = botdb.latest_for(user["tg_id"], chosen, LATEST_ON_START)
         if not rows:
             self.tg.send(chat_id, T["empty_catalogue"])
             return
-        scope = ", ".join(sorted(chosen)) if chosen else T["all_brands_scope"]
+        scope = self.scope_text(user["tg_id"], chosen)
         header = T["latest_header"].format(n=len(rows), scope=esc(scope))
         self.send_listings(chat_id, rows, header)
 
@@ -426,10 +528,51 @@ class Bot:
                                 reply_markup=brand_keyboard(tg_id, int(data.split(":")[1])))
             return
 
+        # ---- model drill-down ----------------------------------------------------
+        if data == "mods":
+            chosen = [b for b in botdb.get_brands(tg_id) if modellib.has_models(b)]
+            if not chosen:
+                self.tg.answer_callback(cq_id, T["pick_brand_first"], alert=True)
+                return
+            self.tg.edit(chat_id, message_id, T["choose_brand_for_models"],
+                         reply_markup=model_brand_keyboard(tg_id))
+            self.tg.answer_callback(cq_id)
+            return
+
+        if data.startswith("mb:"):
+            brand = brandlib.brand_by_id(int(data.split(":")[1]))
+            if not brand or not modellib.has_models(brand):
+                self.tg.answer_callback(cq_id, T["no_models"], alert=True)
+                return
+            self.tg.edit(chat_id, message_id,
+                         T["model_prompt"].format(brand=esc(brand)),
+                         reply_markup=model_keyboard(tg_id, brand))
+            self.tg.answer_callback(cq_id)
+            return
+
+        if data.startswith("m:"):
+            _, bidx, midx = data.split(":")
+            brand = brandlib.brand_by_id(int(bidx))
+            model = modellib.model_by_index(brand, int(midx)) if brand else None
+            if brand and model:
+                selected = botdb.toggle_model(tg_id, brand, model)
+                key = "model_added" if selected else "model_removed"
+                self.tg.answer_callback(cq_id, T[key].format(name=model))
+                self.tg.edit_markup(chat_id, message_id,
+                                    reply_markup=model_keyboard(tg_id, brand))
+            return
+
+        if data.startswith("mall:"):
+            brand = brandlib.brand_by_id(int(data.split(":")[1]))
+            if brand:
+                botdb.clear_models(tg_id, brand)
+                self.tg.answer_callback(cq_id, T["models_cleared"])
+                self.tg.edit_markup(chat_id, message_id,
+                                    reply_markup=model_keyboard(tg_id, brand))
+            return
+
         if data == "done":
-            chosen = botdb.get_brands(tg_id)
-            scope = ", ".join(sorted(chosen)) if chosen else T["every_brand"]
-            self.tg.edit(chat_id, message_id, T["saved"].format(scope=esc(scope)))
+            self.tg.edit(chat_id, message_id, self.scope_summary(tg_id))
             self.tg.answer_callback(cq_id, T["saved_cb"])
             return
 

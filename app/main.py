@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bot as botmod          # noqa: E402
 import botdb                  # noqa: E402
 import brands as brandlib     # noqa: E402
+import models as modellib     # noqa: E402
 import ev_hunter as ev        # noqa: E402
 
 
@@ -33,7 +34,8 @@ def scan_cycle(cfg: dict, bot: botmod.Bot) -> None:
     fresh = 0
     for tier, listing in matches:
         brand = brandlib.detect_brand(listing.title, listing.blob)
-        if botdb.upsert_listing(listing, brand, tier):
+        model = modellib.detect_model(brand, listing.title, listing.blob)
+        if botdb.upsert_listing(listing, brand, tier, model):
             fresh += 1
     ev.log(f"Catalogue: {fresh} new of {len(matches)} matches.")
 
@@ -49,7 +51,7 @@ def scan_cycle(cfg: dict, bot: botmod.Bot) -> None:
         rows = botdb.undelivered_for(user["tg_id"], chosen, per_user)
         if not rows:
             continue
-        scope = ", ".join(sorted(chosen)) if chosen else botmod.T["all_brands_scope"]
+        scope = bot.scope_text(user["tg_id"], chosen)
         header = botmod.T["new_header"].format(n=len(rows), scope=botmod.esc(scope))
         delivered = bot.send_listings(user["tg_id"], rows, header)
         botdb.mark_sent(user["tg_id"], delivered)

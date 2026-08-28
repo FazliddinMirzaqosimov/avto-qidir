@@ -217,6 +217,99 @@ MODELS: dict[str, list[tuple[str, tuple[str, ...]]]] = {
 }
 
 
+# Second wave of brands. Kept separate from the block above only for readability;
+# both are merged into MODELS below.
+_MORE: dict[str, list[tuple[str, tuple[str, ...]]]] = {
+    "Li Auto": [
+        ("L6", ("li l6", "l6")), ("L7", ("li l7", "l7")), ("L8", ("li l8", "l8")),
+        ("L9", ("li l9", "l9")), ("Mega", ("li mega",)), ("i8", ("li i8",)),
+    ],
+    "Xpeng": [
+        ("P5", ("xpeng p5", "p5")), ("P7", ("xpeng p7", "p7")),
+        ("G3", ("xpeng g3", "g3")), ("G6", ("xpeng g6", "g6")),
+        ("G9", ("xpeng g9", "g9")), ("X9", ("xpeng x9",)),
+    ],
+    "NIO": [
+        ("ES6", ("es6",)), ("ES8", ("es8",)), ("ET5", ("et5",)),
+        ("ET7", ("et7",)), ("EC6", ("ec6",)),
+    ],
+    "Voyah": [("Free", ("voyah free",)), ("Dream", ("voyah dream",)),
+              ("Passion", ("voyah passion",))],
+    "Avatr": [("011", ("avatr 011",)), ("11", ("avatr 11",)), ("12", ("avatr 12",))],
+    "Deepal": [("S05", ("deepal s05", "s05")), ("S07", ("deepal s07", "s07")),
+               ("SL03", ("sl03",)), ("L07", ("deepal l07",))],
+    "Zeekr": [("001", ("zeekr 001",)), ("007", ("zeekr 007",)), ("X", ("zeekr x",)),
+              ("009", ("zeekr 009",)), ("7X", ("zeekr 7x",))],
+    "Ora": [("Good Cat", ("ora good cat", "good cat")), ("Funky Cat", ("funky cat",)),
+            ("Lightning Cat", ("lightning cat",))],
+    "Skywell": [("ET5", ("skywell et5",)), ("BE11", ("be11",))],
+    "Livan": [("X3 Pro", ("livan x3",)), ("7", ("livan 7",)), ("9", ("livan 9",))],
+    "Bestune": [("T77", ("t77",)), ("B70", ("b70",)), ("Pony", ("bestune pony", "pony"))],
+    "Beijing": [("EU5", ("eu5",)), ("U5 Plus", ("u5 plus",)), ("X7", ("beijing x7",))],
+    "Buick": [("Velite", ("velite",)), ("Excelle", ("excelle",)),
+              ("Envision", ("envision",)), ("Encore", ("encore",))],
+    "Great Wall": [("Poer", ("poer",)), ("Wingle", ("wingle",))],
+    "JAC": [("iEV7S", ("iev7s",)), ("S3", ("jac s3",)), ("T8", ("jac t8",)),
+            ("J7", ("jac j7",))],
+    "Omoda": [("C5", ("omoda c5", "c5")), ("S5", ("omoda s5",)), ("E5", ("omoda e5",))],
+    "Jaecoo": [("J7", ("jaecoo j7",)), ("J8", ("jaecoo j8",))],
+    "Exeed": [("TXL", ("txl",)), ("VX", ("exeed vx",)), ("RX", ("exeed rx",)),
+              ("LX", ("exeed lx",))],
+    "Wuling": [("Hongguang Mini", ("hongguang mini", "mini ev")),
+               ("Bingo", ("bingo",)), ("Air EV", ("air ev",))],
+    "MG": [("MG4", ("mg4", "mg 4")), ("MG5", ("mg5", "mg 5")), ("MG6", ("mg6", "mg 6")),
+           ("ZS", ("mg zs",)), ("HS", ("mg hs",))],
+    "Maxus": [("Euniq", ("euniq",)), ("T60", ("t60",)), ("D60", ("d60",))],
+    "Volvo": [("XC40", ("xc40",)), ("XC60", ("xc60",)), ("XC90", ("xc90",)),
+              ("S60", ("volvo s60",)), ("S90", ("volvo s90",))],
+    "Polestar": [("Polestar 2", ("polestar 2",)), ("Polestar 3", ("polestar 3",)),
+                 ("Polestar 4", ("polestar 4",))],
+    "Mitsubishi": [("Outlander", ("outlander",)), ("Pajero", ("pajero",)),
+                   ("Lancer", ("lancer",)), ("ASX", ("asx",))],
+    "Subaru": [("Forester", ("forester",)), ("Outback", ("outback",)),
+               ("Impreza", ("impreza",)), ("XV", ("subaru xv",))],
+    "Suzuki": [("Vitara", ("vitara",)), ("Swift", ("swift",)), ("Jimny", ("jimny",))],
+    "Lexus": [("RX", ("lexus rx",)), ("LX", ("lexus lx",)), ("NX", ("lexus nx",)),
+              ("ES", ("lexus es",)), ("GX", ("lexus gx",))],
+    "Honda": [("Civic", ("civic",)), ("CR-V", ("cr-v", "crv")), ("Accord", ("accord",)),
+              ("Fit", ("honda fit",)), ("e:NS1", ("ens1", "e:ns1"))],
+    "Mazda": [("Mazda 3", ("mazda 3", "mazda3")), ("Mazda 6", ("mazda 6", "mazda6")),
+              ("CX-5", ("cx-5", "cx5")), ("CX-9", ("cx-9", "cx9"))],
+    "Ford": [("Focus", ("ford focus",)), ("Mustang", ("mustang",)),
+             ("Explorer", ("explorer",)), ("Transit", ("transit",))],
+    "Peugeot": [("208", ("peugeot 208", "e-208")), ("2008", ("peugeot 2008", "e-2008")),
+                ("308", ("peugeot 308",)), ("3008", ("peugeot 3008",))],
+    "Renault": [("Duster", ("duster",)), ("Logan", ("logan",)), ("Sandero", ("sandero",)),
+                ("Zoe", ("renault zoe", "zoe")), ("Kaptur", ("kaptur",))],
+    "Skoda": [("Octavia", ("octavia",)), ("Rapid", ("skoda rapid",)),
+              ("Kodiaq", ("kodiaq",)), ("Karoq", ("karoq",))],
+    "Opel": [("Astra", ("astra",)), ("Insignia", ("insignia",)),
+             ("Mokka", ("mokka", "mokka-e")), ("Corsa", ("corsa",))],
+    "UAZ": [("Patriot", ("patriot",)), ("Hunter", ("uaz hunter",)),
+            ("Buhanka", ("buhanka", "буханка"))],
+    "Foton": [("Tunland", ("tunland",)), ("Aumark", ("aumark",))],
+    "FAW": [("Bestune T77", ("faw t77",)), ("Besturn", ("besturn",))],
+    "Tank": [("Tank 300", ("tank 300",)), ("Tank 500", ("tank 500",))],
+    "Denza": [("D9", ("denza d9",)), ("N7", ("denza n7",)), ("N9", ("denza n9",))],
+    "Seres": [("Aito M5", ("aito m5", "m5")), ("Aito M7", ("aito m7", "m7")),
+              ("Aito M9", ("aito m9", "m9"))],
+    "Xiaomi": [("SU7", ("su7",)), ("YU7", ("yu7",))],
+    "Vinfast": [("VF3", ("vf3",)), ("VF5", ("vf5",)), ("VF6", ("vf6",)),
+                ("VF8", ("vf8",))],
+    "BAIC": [("EU5", ("baic eu5",)), ("X55", ("x55",)), ("BJ40", ("bj40",))],
+    "Moskvich": [("3", ("moskvich 3",)), ("6", ("moskvich 6",)), ("3e", ("moskvich 3e",))],
+    "Evolute": [("i-Pro", ("i-pro",)), ("i-Joy", ("i-joy",)), ("i-Van", ("i-van",))],
+    "Jetta": [("VS5", ("vs5",)), ("VS7", ("vs7",)), ("VA3", ("va3",))],
+    "Kaiyi": [("X3", ("kaiyi x3",)), ("E5", ("kaiyi e5",))],
+    "Forthing": [("T5 Evo", ("t5 evo",)), ("Friday", ("forthing friday",))],
+}
+
+for _brand, _entries in _MORE.items():
+    MODELS.setdefault(_brand, [])
+    _existing = {n for n, _ in MODELS[_brand]}
+    MODELS[_brand].extend((n, a) for n, a in _entries if n not in _existing)
+
+
 def models_for(brand: str) -> list[str]:
     """Model names offered for a brand; empty when the brand has no drill-down."""
     return [name for name, _ in MODELS.get(brand, [])]

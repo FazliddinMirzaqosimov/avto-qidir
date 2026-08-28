@@ -77,6 +77,16 @@ T = {
                          "Моделни танлаш учун дастлаб қайси бренд кераклигини "
                          "белгиланг — сўнг ўша бренднинг моделлари рўйхати очилади.\n\n"
                          "Қуйидан брендни танланг 👇"),
+    # Different situation, different message: the subscriber DID pick a brand, that
+    # brand simply has no model list yet. Telling them to "pick a brand first" here
+    # is just confusing.
+    "no_models_for_brands": ("ℹ️ Сиз танлаган бренд(лар) — <b>{brands}</b> — учун "
+                             "моделлар рўйхати ҳозирча тузилмаган.\n\n"
+                             "Хавотир олманг: бу брендларнинг <b>барча</b> эълонлари "
+                             "сизга юборилаверади.\n\n"
+                             "Модел бўйича танлаш учун моделлари мавжуд брендни "
+                             "қўшишингиз мумкин 👇"),
+    "no_models_toast": "Бу бренд учун моделлар рўйхати йўқ.",
     "choose_brand_for_models": ("🚙 <b>Модел танлаш</b>\n"
                                 "<i>Қайси бренд ичидан модел танламоқчисиз?</i>"),
     "no_models": "Бу бренд учун моделлар рўйхати ҳозирча йўқ — барча эълонлар юборилади.",
@@ -480,14 +490,7 @@ class Bot:
             self.tg.send(chat_id, T["mileage_prompt"],
                          reply_markup=mileage_keyboard(tg_user["id"]))
         elif command in ("models", "model"):
-            chosen = [b for b in botdb.get_brands(tg_user["id"]) if modellib.has_models(b)]
-            if not chosen:
-                self.tg.send(chat_id, T["pick_brand_first"])
-                self.tg.send(chat_id, T["brand_prompt"],
-                             reply_markup=brand_keyboard(tg_user["id"], 0))
-            else:
-                self.tg.send(chat_id, T["choose_brand_for_models"],
-                             reply_markup=model_brand_keyboard(tg_user["id"]))
+            self.open_model_picker(chat_id, tg_user["id"])
         elif command in ("brands", "cars", "mycars"):
             self.tg.send(chat_id, T["brand_prompt"],
                          reply_markup=brand_keyboard(tg_user["id"], 0))
@@ -538,6 +541,26 @@ class Bot:
                 parts.append(f"{brand} ({', '.join(models)})" if models else brand)
             scope = ", ".join(parts)
         return T["saved"].format(scope=esc(scope + self._extra_scope(tg_id, "\n")))
+
+    def open_model_picker(self, chat_id: int, tg_id: int) -> None:
+        """Open the model drill-down, explaining precisely why if it cannot be opened.
+
+        Three outcomes, and they are genuinely different: no brand chosen at all, a
+        brand chosen that has no model list yet, or a normal drill-down. Collapsing the
+        first two into one message is what confused subscribers.
+        """
+        all_brands = botdb.get_brands(tg_id)
+        with_models = [b for b in all_brands if modellib.has_models(b)]
+        if not all_brands:
+            self.tg.send(chat_id, T["pick_brand_first"])
+            self.tg.send(chat_id, T["brand_prompt"], reply_markup=brand_keyboard(tg_id, 0))
+        elif not with_models:
+            self.tg.send(chat_id, T["no_models_for_brands"].format(
+                brands=esc(", ".join(sorted(all_brands)))))
+            self.tg.send(chat_id, T["brand_prompt"], reply_markup=brand_keyboard(tg_id, 0))
+        else:
+            self.tg.send(chat_id, T["choose_brand_for_models"],
+                         reply_markup=model_brand_keyboard(tg_id))
 
     def cmd_latest(self, chat_id: int, user: dict) -> None:
         chosen = botdb.get_brands(user["tg_id"])
@@ -669,10 +692,15 @@ class Bot:
 
         # ---- model drill-down ----------------------------------------------------
         if data == "mods":
-            chosen = [b for b in botdb.get_brands(tg_id) if modellib.has_models(b)]
-            if not chosen:
-                self.tg.answer_callback(cq_id, T["pick_brand_first_toast"],
-                                        alert=True)
+            all_brands = botdb.get_brands(tg_id)
+            with_models = [b for b in all_brands if modellib.has_models(b)]
+            if not all_brands:
+                self.tg.answer_callback(cq_id, T["pick_brand_first_toast"], alert=True)
+                return
+            if not with_models:
+                self.tg.answer_callback(cq_id, T["no_models_toast"], alert=True)
+                self.tg.send(chat_id, T["no_models_for_brands"].format(
+                    brands=esc(", ".join(sorted(all_brands)))))
                 return
             self.tg.edit(chat_id, message_id, T["choose_brand_for_models"],
                          reply_markup=model_brand_keyboard(tg_id))

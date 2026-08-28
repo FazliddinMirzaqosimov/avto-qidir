@@ -559,6 +559,68 @@ check("announcement mentions both new filters",
       "/mileage" in botmod.T["announce_filters"]
       and "/year" in botmod.T["announce_filters"])
 
+print("\n=== 21. /models explains itself in all three cases ===")
+
+
+class RecordTG:
+    def __init__(self):
+        self.msgs = []
+        self.toasts = []
+
+    def send(self, chat_id, text, reply_markup=None, preview=False):
+        self.msgs.append(text)
+        return {"message_id": len(self.msgs)}
+
+    def send_checked(self, *a, **k):
+        return self.send(*a, **k), None
+
+    def answer_callback(self, cq_id, text=None, alert=False):
+        self.toasts.append(text)
+
+    def edit(self, *a, **k):
+        return {}
+
+    def edit_markup(self, *a, **k):
+        return {}
+
+
+_b6 = botmod.Bot({"telegram": {"bot_token": "x", "chat_id": "1", "admin_chat_id": "1"},
+                  "runtime": {"max_items_per_message": 5}}, lambda *a, **k: None)
+
+# (a) no brand at all
+_b6.tg = RecordTG()
+botdb.set_brands(2100, [])
+_b6.open_model_picker(1, 2100)
+check("no brand -> 'choose a brand first'",
+      botmod.T["pick_brand_first"] in _b6.tg.msgs, _b6.tg.msgs[:1])
+
+# (b) a brand that has no model list - the case from the screenshot
+_b6.tg = RecordTG()
+botdb.set_brands(2101, ["Rivian"])
+_b6.open_model_picker(1, 2101)
+joined = " ".join(_b6.tg.msgs)
+check("brand without models does NOT say 'choose a brand first'",
+      botmod.T["pick_brand_first"] not in _b6.tg.msgs, _b6.tg.msgs[:1])
+check("brand without models names the brand", "Rivian" in joined, joined[:120])
+check("brand without models reassures they still get listings",
+      "барча" in joined.lower())
+
+# (c) a brand that does have models
+_b6.tg = RecordTG()
+botdb.set_brands(2102, ["BYD"])
+_b6.open_model_picker(1, 2102)
+check("brand with models opens the chooser",
+      botmod.T["choose_brand_for_models"] in _b6.tg.msgs)
+
+check("Li Auto now has models", modellib.has_models("Li Auto"))
+check("Li Auto L9 detected",
+      modellib.detect_model("Li Auto", "Li Auto L9 2024 ideal") == "L9")
+check("most brands now carry a model list",
+      sum(1 for b in brandlib.BRAND_NAMES if modellib.has_models(b)) >= 60,
+      sum(1 for b in brandlib.BRAND_NAMES if modellib.has_models(b)))
+check("no model list is empty",
+      all(modellib.models_for(b) for b in modellib.MODELS))
+
 print("\n" + "=" * 46)
 print(f"  {PASS} passed, {FAIL} failed")
 print("=" * 46)

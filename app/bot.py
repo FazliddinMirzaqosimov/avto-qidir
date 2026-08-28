@@ -516,7 +516,7 @@ def hub_keyboard() -> dict:
          {"text": T["year_btn"], "callback_data": "yr"}],
         [{"text": T["loc_btn"], "callback_data": "lp:0"}],
         [{"text": T["clear_all"], "callback_data": "clearall"}],
-        [{"text": T["done"], "callback_data": "done"}],
+        [{"text": T["done"], "callback_data": "finish"}],
     ]}
 
 
@@ -960,7 +960,16 @@ class Bot:
                                     reply_markup=model_keyboard(tg_id, brand))
             return
 
+        # Done inside a picker: save and hand back the hub, buttons and all, so the
+        # next filter is one tap away instead of requiring "⚙️ Фильтрлар" again.
         if data == "done":
+            self.tg.edit(chat_id, message_id, hub_text(tg_id),
+                         reply_markup=hub_keyboard())
+            self.tg.answer_callback(cq_id, T["saved_cb"])
+            return
+
+        # Done on the hub itself: that is the end of the whole flow.
+        if data == "finish":
             self.tg.edit(chat_id, message_id, hub_text(tg_id))
             self.tg.send(chat_id, T["hub_saved"], reply_markup=main_menu())
             self.tg.answer_callback(cq_id, T["saved_cb"])

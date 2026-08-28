@@ -725,7 +725,7 @@ targets = [b["callback_data"] for r in hub for b in r]
 check("hub reaches every filter in one tap",
       {"p:0", "mods", "km", "yr", "lp:0"} <= set(targets), targets)
 check("hub offers clear-all", "clearall" in targets)
-check("hub offers done", "done" in targets)
+check("hub offers finish (its Done ends the whole flow)", "finish" in targets)
 check("hub is at most five rows (fits a phone)", len(hub) <= 5, len(hub))
 
 botdb.set_brands(3200, ["BYD"])
@@ -794,6 +794,93 @@ try:
           botdb.init() is None)
 finally:
     botdb.DB_PATH = _saved_path
+
+print("\n=== 27. Done returns you to the filter hub ===")
+
+
+class NavTG:
+    """Captures edits and sends so the navigation flow can be asserted."""
+
+    def __init__(self):
+        self.edits = []
+        self.sends = []
+        self.toasts = []
+
+    def edit(self, chat_id, message_id, text, reply_markup=None):
+        self.edits.append({"text": text, "markup": reply_markup})
+        return {}
+
+    def edit_markup(self, chat_id, message_id, reply_markup=None):
+        self.edits.append({"text": None, "markup": reply_markup})
+        return {}
+
+    def send(self, chat_id, text, reply_markup=None, preview=False):
+        self.sends.append({"text": text, "markup": reply_markup})
+        return {"message_id": len(self.sends)}
+
+    def send_checked(self, *a, **k):
+        return self.send(*a, **k), None
+
+    def answer_callback(self, cq_id, text=None, alert=False):
+        self.toasts.append(text)
+
+
+def _cq(data, uid=4100):
+    return {"id": "cq1", "data": data, "from": {"id": uid},
+            "message": {"message_id": 7, "chat": {"id": uid}}}
+
+
+_b7 = botmod.Bot({"telegram": {"bot_token": "x", "chat_id": "1", "admin_chat_id": "1"},
+                  "runtime": {"max_items_per_message": 5}}, lambda *a, **k: None)
+botdb.upsert_user({"id": 4100, "first_name": "Nav"})
+botdb.clear_all_filters(4100)
+
+# every picker still offers Done
+for name, kb in (("mileage", botmod.mileage_keyboard(4100)),
+                 ("year", botmod.year_keyboard(4100)),
+                 ("location", botmod.location_keyboard(4100, 0)),
+                 ("brands", botmod.brand_keyboard(4100, 0))):
+    check(f"{name} picker has a Done button",
+          any(b.get("callback_data") == "done" for r in kb["inline_keyboard"] for b in r))
+
+# Done inside a picker -> hub text AND the hub buttons come back
+_b7.tg = NavTG()
+_b7.handle_callback(_cq("done"))
+check("Done shows the hub message",
+      _b7.tg.edits and "Сизнинг фильтрларингиз" in _b7.tg.edits[-1]["text"],
+      _b7.tg.edits[-1]["text"][:60] if _b7.tg.edits else None)
+markup = _b7.tg.edits[-1]["markup"] or {}
+targets = [b["callback_data"] for r in markup.get("inline_keyboard", []) for b in r]
+check("Done brings the hub buttons back", {"p:0", "mods", "km", "yr", "lp:0"} <= set(targets),
+      targets)
+check("so the next filter is one tap away, not three", "lp:0" in targets)
+check("Done confirms with a toast", _b7.tg.toasts == [botmod.T["saved_cb"]], _b7.tg.toasts)
+check("Done does not spam an extra message", _b7.tg.sends == [], _b7.tg.sends)
+
+# Done on the hub itself -> final confirmation, buttons retired
+_b7.tg = NavTG()
+_b7.handle_callback(_cq("finish"))
+check("hub Done ends the flow with a confirmation",
+      any(s["text"] == botmod.T["hub_saved"] for s in _b7.tg.sends), _b7.tg.sends)
+check("hub Done restores the bottom menu",
+      any((s["markup"] or {}).get("is_persistent") for s in _b7.tg.sends))
+check("hub Done clears the inline buttons",
+      _b7.tg.edits and not _b7.tg.edits[-1]["markup"])
+
+# the round trip: hub -> location -> Done -> hub
+_b7.tg = NavTG()
+_b7.handle_callback(_cq("lp:0"))
+check("hub opens the location picker",
+      any(b["callback_data"].startswith("lc:")
+          for r in (_b7.tg.edits[-1]["markup"] or {}).get("inline_keyboard", []) for b in r))
+_b7.handle_callback(_cq("done"))
+after = [b["callback_data"] for r in (_b7.tg.edits[-1]["markup"] or {})
+         .get("inline_keyboard", []) for b in r]
+check("and Done lands back on the hub", "clearall" in after, after)
+
+check("only the hub uses 'finish'",
+      sum(1 for r in botmod.hub_keyboard()["inline_keyboard"] for b in r
+          if b.get("callback_data") == "finish") == 1)
 
 print("\n" + "=" * 46)
 print(f"  {PASS} passed, {FAIL} failed")

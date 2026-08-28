@@ -125,7 +125,6 @@ CREATE INDEX IF NOT EXISTS idx_user_models_u   ON user_models(tg_id);
 CREATE INDEX IF NOT EXISTS idx_user_bands_u    ON user_bands(tg_id);
 CREATE INDEX IF NOT EXISTS idx_user_years_u    ON user_years(tg_id);
 CREATE INDEX IF NOT EXISTS idx_user_locs_u     ON user_locations(tg_id);
-CREATE INDEX IF NOT EXISTS idx_listings_region ON listings(region);
 CREATE INDEX IF NOT EXISTS idx_listings_year   ON listings(year);
 CREATE INDEX IF NOT EXISTS idx_listings_km     ON listings(mileage_km);
 CREATE INDEX IF NOT EXISTS idx_listings_seen  ON listings(first_seen);
@@ -145,6 +144,9 @@ def init(admin_id: int | None = None) -> None:
                 conn.execute('ALTER TABLE listings ADD COLUMN model TEXT')
             if 'region' not in cols:
                 conn.execute('ALTER TABLE listings ADD COLUMN region TEXT')
+            # Only safe once the columns above certainly exist.
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_listings_region ON listings(region)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_listings_model ON listings(model)')
             # The four coarse bands (under50/under100/under150/unknown) became ten
             # finer buckets. Translate any existing subscription so nobody silently
             # loses their mileage preference on upgrade.

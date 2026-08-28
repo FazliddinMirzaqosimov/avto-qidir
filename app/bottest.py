@@ -755,6 +755,46 @@ check("empty-result message suggests widening",
 check("location announcement is Cyrillic",
       CYR.search(botmod.T["announce_location"]) is not None)
 
+print("\n=== 26. upgrading an older database in place ===")
+import sqlite3 as _sq3  # noqa: E402
+import tempfile as _tf  # noqa: E402
+
+# Build a database shaped like the deployed one BEFORE this release: listings without
+# the region column. init() must widen it rather than crash, which is exactly what
+# shipping an index on a not-yet-added column did in production.
+_old_dir = _tf.mkdtemp(prefix="evbot_old_")
+_old_db = os.path.join(_old_dir, "ev_hunter.db")
+_oc = _sq3.connect(_old_db)
+_oc.executescript("""
+CREATE TABLE listings (key TEXT PRIMARY KEY, source TEXT, ad_id TEXT, url TEXT,
+  title TEXT, price_usd INTEGER, year INTEGER, mileage_km INTEGER, city TEXT,
+  fuel TEXT, owners INTEGER, brand TEXT, tier TEXT, posted_at TEXT, first_seen TEXT);
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+INSERT INTO listings(key,title,city,mileage_km,year) VALUES
+  ('OLX:old1','BYD Seagull','Ташкент Ташкентская область',9000,2024);
+""")
+_oc.commit()
+_oc.close()
+
+_saved_path = botdb.DB_PATH
+botdb.DB_PATH = _old_db
+try:
+    botdb.init()
+    _c2 = botdb.connect()
+    _cols = [r[1] for r in _c2.execute("PRAGMA table_info(listings)")]
+    check("init() adds the model column to an old database", "model" in _cols)
+    check("init() adds the region column to an old database", "region" in _cols)
+    _idx = [r[0] for r in _c2.execute(
+        "SELECT name FROM sqlite_master WHERE type='index'")]
+    check("region index created after the column exists", "idx_listings_region" in _idx)
+    check("existing rows survive the upgrade",
+          _c2.execute("SELECT COUNT(*) FROM listings").fetchone()[0] == 1)
+    _c2.close()
+    check("init() is idempotent on an upgraded database",
+          botdb.init() is None)
+finally:
+    botdb.DB_PATH = _saved_path
+
 print("\n" + "=" * 46)
 print(f"  {PASS} passed, {FAIL} failed")
 print("=" * 46)

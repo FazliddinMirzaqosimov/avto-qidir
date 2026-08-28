@@ -391,8 +391,9 @@ botdb.set_brands(999, ["BYD", "Chevrolet"])
 mbk = botmod.model_brand_keyboard(999)["inline_keyboard"]
 check("brand chooser lists both brands",
       sum(1 for r in mbk for b in r if b["callback_data"].startswith("mb:")) == 2)
-check("brand chooser has a back button",
-      any(b["callback_data"] == "p:0" for r in mbk for b in r))
+check("brand chooser goes back to the filter hub",
+      any(b["callback_data"] == "hub" for r in mbk for b in r),
+      [b["callback_data"] for r in mbk for b in r])
 
 botdb.toggle_model(999, "BYD", "Seagull")
 mk = botmod.model_keyboard(999, "BYD")["inline_keyboard"]
@@ -643,6 +644,116 @@ _src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          "broadcast.py"), encoding="utf-8").read()
 check("broadcast supports --admin", "--admin" in _src)
 check("broadcast still defaults to a dry run", '"--send" in sys.argv' in _src)
+
+print("\n=== 23. location detection on real OLX strings ===")
+import locations as loclib  # noqa: E402
+
+real = [("Ташкент Ташкентская область", "tashkent"),
+        ("tashkent", "tashkent"),
+        ("Келес Ташкентская область", "keles"),
+        ("Чирчик Ташкентская область", "chirchiq"),
+        ("Алмалык Ташкентская область", "olmaliq"),
+        ("Нурафшан (Тойтепа) Ташкентская область", "nurafshon"),
+        ("Ангрен Ташкентская область", "angren"),
+        ("Ташкентская область", "boshqa_tosh"),
+        ("samarkand", "boshqa_viloyat"),
+        ("dzhizak", "boshqa_viloyat"),
+        ("", "unknown")]
+wrong = [(t, w, loclib.detect_location(t)) for t, w in real
+         if loclib.detect_location(t) != w]
+check("every real location string maps correctly", not wrong, wrong)
+check("city beats the oblast suffix",
+      loclib.detect_location("Келес Ташкентская область") != "boshqa_tosh")
+
+print("\n=== 24. location filtering ===")
+botdb.set_brands(3100, [])
+botdb.clear_all_filters(3100)
+locs = [("OLX:L1", "Ташкент Ташкентская область"), ("OLX:L2", "Чирчик Ташкентская область"),
+        ("OLX:L3", "samarkand"), ("OLX:L4", "")]
+LKEYS = {k for k, _ in locs}
+for key, city in locs:
+    fl = FakeListing(key, f"Car {key}", 9000)
+    fl.city = city
+    botdb.upsert_listing(fl, "BYD", "km0_10", None, loclib.detect_location(city))
+
+
+def lkeys(uid):
+    return {r["key"] for r in botdb.undelivered_for(uid, None, 200)} & LKEYS
+
+
+check("no location selected means everywhere", lkeys(3100) == LKEYS, lkeys(3100))
+botdb.set_locations(3100, ["tashkent"])
+check("Tashkent only", lkeys(3100) == {"OLX:L1"}, lkeys(3100))
+botdb.set_locations(3100, ["tashkent", "chirchiq"])
+check("two places union", lkeys(3100) == {"OLX:L1", "OLX:L2"})
+botdb.set_locations(3100, ["boshqa_viloyat"])
+check("other regions bucket", lkeys(3100) == {"OLX:L3"})
+botdb.set_locations(3100, ["unknown"])
+check("unknown location bucket", lkeys(3100) == {"OLX:L4"})
+botdb.set_locations(3100, list(loclib.LOCATION_KEYS))
+check("all locations behaves like no filter", lkeys(3100) == LKEYS)
+botdb.clear_locations(3100)
+try:
+    botdb.toggle_location(3100, "'; DROP TABLE listings; --")
+    check("rejects unknown location", False, "no error raised")
+except ValueError:
+    check("rejects unknown location", True)
+
+botdb.set_brands(3100, ["BYD"])
+botdb.set_locations(3100, ["tashkent"])
+# FakeListing defaults to 10 000 km, which is the km10_20 bucket, not km0_10.
+botdb.set_bands(3100, ["km10_20"])
+check("location combines with brand and mileage", lkeys(3100) == {"OLX:L1"}, lkeys(3100))
+botdb.clear_all_filters(3100)
+check("clear_all_filters resets everything",
+      not botdb.get_brands(3100) and not botdb.get_bands(3100)
+      and not botdb.get_years(3100) and not botdb.get_locations(3100)
+      and not botdb.get_models(3100))
+check("and reopens the full feed", lkeys(3100) == LKEYS)
+
+print("\n=== 25. foolproof UX ===")
+menu = botmod.main_menu()
+check("bottom menu is persistent", menu.get("is_persistent") is True)
+check("bottom menu resizes", menu.get("resize_keyboard") is True)
+labels = [b["text"] for r in menu["keyboard"] for b in r]
+check("menu has exactly three buttons", len(labels) == 3, labels)
+check("menu buttons are Cyrillic or emoji",
+      all(CYR.search(x) for x in labels), labels)
+
+hub = botmod.hub_keyboard()["inline_keyboard"]
+targets = [b["callback_data"] for r in hub for b in r]
+check("hub reaches every filter in one tap",
+      {"p:0", "mods", "km", "yr", "lp:0"} <= set(targets), targets)
+check("hub offers clear-all", "clearall" in targets)
+check("hub offers done", "done" in targets)
+check("hub is at most five rows (fits a phone)", len(hub) <= 5, len(hub))
+
+botdb.set_brands(3200, ["BYD"])
+botdb.set_bands(3200, ["km0_10"])
+htext = botmod.hub_text(3200)
+check("hub shows the current brand", "BYD" in htext)
+check("hub shows the current mileage", "10 000" in htext)
+check("hub shows every filter row",
+      all(w in htext for w in ("Бренд", "Модел", "Юриш", "Йил", "Жой")))
+botdb.clear_all_filters(3200)
+check("hub says 'all' when nothing is set",
+      htext != botmod.hub_text(3200) and botmod.T["hub_none"] in botmod.hub_text(3200))
+
+check("every picker's back button returns to the hub",
+      all(any(b.get("callback_data") == "hub" for r in kb["inline_keyboard"] for b in r)
+          for kb in (botmod.mileage_keyboard(3200), botmod.year_keyboard(3200),
+                     botmod.location_keyboard(3200, 0))))
+check("location callbacks fit 64 bytes",
+      all(len(b.get("callback_data", "").encode()) <= 64
+          for r in botmod.location_keyboard(3200, 0)["inline_keyboard"] for b in r))
+check("onboarding explains the buttons",
+      all(w in botmod.T["onboard"] for w in ("Сўнгги эълонлар", "Фильтрлар", "Ёрдам")))
+check("help mentions no raw commands the user must type",
+      "/brands" not in botmod.T["help_full"])
+check("empty-result message suggests widening",
+      "Фильтрлар" in botmod.T["nothing_matches"])
+check("location announcement is Cyrillic",
+      CYR.search(botmod.T["announce_location"]) is not None)
 
 print("\n" + "=" * 46)
 print(f"  {PASS} passed, {FAIL} failed")

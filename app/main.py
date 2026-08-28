@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bot as botmod          # noqa: E402
 import botdb                  # noqa: E402
 import brands as brandlib     # noqa: E402
+import locations as loclib    # noqa: E402
 import models as modellib     # noqa: E402
 import ev_hunter as ev        # noqa: E402
 
@@ -35,7 +36,8 @@ def scan_cycle(cfg: dict, bot: botmod.Bot) -> None:
     for tier, listing in matches:
         brand = brandlib.detect_brand(listing.title, listing.blob)
         model = modellib.detect_model(brand, listing.title, listing.blob)
-        if botdb.upsert_listing(listing, brand, tier, model):
+        region = loclib.detect_location(listing.city)
+        if botdb.upsert_listing(listing, brand, tier, model, region):
             fresh += 1
     ev.log(f"Catalogue: {fresh} new of {len(matches)} matches.")
 

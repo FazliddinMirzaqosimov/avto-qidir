@@ -1394,6 +1394,10 @@ def get_usd_rate(cfg: dict) -> float:
 # --------------------------------------------------------------------------------------
 
 def in_target_region(listing: Listing, regions: list[str]) -> bool:
+    # An empty region list means "anywhere". Subscribers narrow by location themselves
+    # now, so the scanner no longer needs to be the one drawing the map.
+    if not regions:
+        return True
     haystack = f"{norm(listing.city)} {listing.blob} {norm(listing.url)}"
     if any(norm(region) in haystack for region in regions):
         return True

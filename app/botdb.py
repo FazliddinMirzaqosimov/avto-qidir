@@ -14,6 +14,7 @@ import sqlite3
 import threading
 
 import carfilters
+import locations
 from datetime import datetime, timedelta, timezone
 
 TASHKENT_TZ = timezone(timedelta(hours=5))
@@ -74,6 +75,13 @@ CREATE TABLE IF NOT EXISTS user_years (
     PRIMARY KEY (tg_id, yband)
 );
 
+-- Which places a subscriber wants. No rows means everywhere.
+CREATE TABLE IF NOT EXISTS user_locations (
+    tg_id INTEGER NOT NULL,
+    loc   TEXT NOT NULL,
+    PRIMARY KEY (tg_id, loc)
+);
+
 -- Optional narrowing inside a chosen brand. No row for a brand means "every model of
 -- it", so subscribers who never open the model picker keep their existing behaviour.
 CREATE TABLE IF NOT EXISTS user_models (
@@ -97,6 +105,7 @@ CREATE TABLE IF NOT EXISTS listings (
     owners     INTEGER,
     brand      TEXT,
     model      TEXT,
+    region     TEXT,
     tier       TEXT,
     posted_at  TEXT,
     first_seen TEXT
@@ -115,6 +124,8 @@ CREATE INDEX IF NOT EXISTS idx_listings_brand ON listings(brand);
 CREATE INDEX IF NOT EXISTS idx_user_models_u   ON user_models(tg_id);
 CREATE INDEX IF NOT EXISTS idx_user_bands_u    ON user_bands(tg_id);
 CREATE INDEX IF NOT EXISTS idx_user_years_u    ON user_years(tg_id);
+CREATE INDEX IF NOT EXISTS idx_user_locs_u     ON user_locations(tg_id);
+CREATE INDEX IF NOT EXISTS idx_listings_region ON listings(region);
 CREATE INDEX IF NOT EXISTS idx_listings_year   ON listings(year);
 CREATE INDEX IF NOT EXISTS idx_listings_km     ON listings(mileage_km);
 CREATE INDEX IF NOT EXISTS idx_listings_seen  ON listings(first_seen);
@@ -132,6 +143,8 @@ def init(admin_id: int | None = None) -> None:
             cols = {r[1] for r in conn.execute('PRAGMA table_info(listings)')}
             if 'model' not in cols:
                 conn.execute('ALTER TABLE listings ADD COLUMN model TEXT')
+            if 'region' not in cols:
+                conn.execute('ALTER TABLE listings ADD COLUMN region TEXT')
             # The four coarse bands (under50/under100/under150/unknown) became ten
             # finer buckets. Translate any existing subscription so nobody silently
             # loses their mileage preference on upgrade.
@@ -318,7 +331,7 @@ def set_brands(tg_id: int, brands: list[str]) -> None:
 # ------------------------------------------------------------------------ listings ---
 
 def upsert_listing(listing, brand: str | None, tier: str,
-                   model: str | None = None) -> bool:
+                   model: str | None = None, region: str | None = None) -> bool:
     """Store a matched listing. Returns True if it was not in the catalogue before."""
     with _WRITE_LOCK:
         conn = connect()
@@ -327,11 +340,11 @@ def upsert_listing(listing, brand: str | None, tier: str,
                                   (listing.key,)).fetchone()
             conn.execute(
                 "INSERT OR IGNORE INTO listings(key,source,ad_id,url,title,price_usd,year,"
-                "mileage_km,city,fuel,owners,brand,model,tier,posted_at,first_seen) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "mileage_km,city,fuel,owners,brand,model,region,tier,posted_at,first_seen) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (listing.key, listing.source, listing.ad_id, listing.url, listing.title,
                  listing.price_usd, listing.year, listing.mileage_km, listing.city,
-                 listing.fuel, listing.owners, brand, model, tier,
+                 listing.fuel, listing.owners, brand, model, region, tier,
                  listing.posted_at.isoformat() if listing.posted_at else None, now_iso()))
 
             # Rows carried over from the old single-chat `seen` table have no brand, year
@@ -340,11 +353,12 @@ def upsert_listing(listing, brand: str | None, tier: str,
             # COALESCE keeps whatever is already there and only fills the gaps.
             conn.execute(
                 "UPDATE listings SET brand=COALESCE(brand,?), model=COALESCE(model,?), "
+                "region=COALESCE(region,?), "
                 "tier=COALESCE(tier,?), "
                 "year=COALESCE(year,?), mileage_km=COALESCE(mileage_km,?), "
                 "city=COALESCE(NULLIF(city,''),?), fuel=COALESCE(NULLIF(fuel,''),?), "
                 "owners=COALESCE(owners,?) WHERE key=?",
-                (brand, model, tier, listing.year, listing.mileage_km, listing.city,
+                (brand, model, region, tier, listing.year, listing.mileage_km, listing.city,
                  listing.fuel, listing.owners, listing.key))
             conn.commit()
             return exists is None
@@ -525,10 +539,48 @@ def clear_years(tg_id: int) -> None:
     set_years(tg_id, [])
 
 
+def get_locations(tg_id: int) -> set[str]:
+    """Location buckets this user wants. Empty means everywhere."""
+    conn = connect()
+    try:
+        return {r["loc"] for r in
+                conn.execute("SELECT loc FROM user_locations WHERE tg_id=?", (tg_id,))}
+    finally:
+        conn.close()
+
+
+def toggle_location(tg_id: int, loc: str) -> bool:
+    return _toggle("user_locations", "loc", locations.LOCATION_KEYS, tg_id, loc)
+
+
+def set_locations(tg_id: int, locs: list[str]) -> None:
+    _set_all("user_locations", "loc", locations.LOCATION_KEYS, tg_id, locs)
+
+
+def clear_locations(tg_id: int) -> None:
+    set_locations(tg_id, [])
+
+
+def clear_all_filters(tg_id: int) -> None:
+    """Reset every narrowing at once - the 'show me everything again' button."""
+    set_brands(tg_id, [])
+    set_bands(tg_id, [])
+    set_years(tg_id, [])
+    set_locations(tg_id, [])
+    with _WRITE_LOCK:
+        conn = connect()
+        try:
+            conn.execute("DELETE FROM user_models WHERE tg_id=?", (tg_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+
 def _band_clause(tg_id: int, alias: str = "l.") -> str:
     """Mileage + year restrictions for this user; '' when nothing is narrowed."""
     return (carfilters.mileage_sql(get_bands(tg_id), f"{alias}mileage_km")
-            + carfilters.year_sql(get_years(tg_id), f"{alias}year"))
+            + carfilters.year_sql(get_years(tg_id), f"{alias}year")
+            + locations.location_sql(get_locations(tg_id), f"{alias}region"))
 
 
 def undelivered_for(tg_id: int, brands: set[str] | None, limit: int) -> list[dict]:

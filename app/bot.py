@@ -13,6 +13,7 @@ import time
 import botdb
 import brands as brandlib
 import carfilters as cf
+import locations as loclib
 import models as modellib
 from telegram_api import Telegram, esc
 
@@ -161,6 +162,66 @@ T = {
         "150 тадан <b>314</b> та моделга кенгайтирилди "
         "(Li Auto, Xpeng, NIO, MG, Volvo, Lexus ва бошқалар).\n\n"
         "<i>Тестлар: 105 + 149 — барчаси ўтди.</i>"),
+    "menu_latest": "🚗 Сўнгги эълонлар",
+    "menu_filters": "⚙️ Фильтрлар",
+    "menu_help": "❓ Ёрдам",
+    "loc_btn": "📍 Жой",
+    "loc_prompt": ("📍 <b>Қаердаги машиналар керак?</b>\n"
+                   "<i>Керакли жойларни белгиланг. Ҳеч нарса танланмаса, "
+                   "барча жойлардан юборилади.</i>"),
+    "loc_added": "{name} қўшилди",
+    "loc_removed": "{name} олиб ташланди",
+    "locs_cleared": "Барча жойлар (чеклов олиб ташланди)",
+    "every_loc": "барча жойлар",
+    "hub": ("⚙️ <b>Сизнинг фильтрларингиз</b>\n"
+            "<code>─────────────────────</code>\n"
+            "🚗 <b>Бренд:</b> {brands}\n"
+            "🚙 <b>Модел:</b> {models}\n"
+            "🛣 <b>Юриш:</b> {mileage}\n"
+            "📅 <b>Йил:</b> {years}\n"
+            "📍 <b>Жой:</b> {locs}\n"
+            "<code>─────────────────────</code>\n"
+            "<i>Ўзгартириш учун пастдаги тугмани босинг.</i>"),
+    "hub_none": "барчаси",
+    "clear_all": "🧹 Ҳаммасини тозалаш",
+    "clear_all_done": "Барча фильтрлар тозаланди",
+    "hub_saved": ("✅ <b>Тайёр!</b>\n\n"
+                  "Янги мос эълонлар пайдо бўлиши билан сизга дарҳол юбораман.\n\n"
+                  "<i>Фильтрни ўзгартириш учун «⚙️ Фильтрлар» тугмасини босинг.</i>"),
+    "onboard": ("🎉 <b>Тайёр! Ҳаммаси ишлаяпти.</b>\n\n"
+                "Пастда доимий тугмалар пайдо бўлди — ҳеч қандай буйруқ ёзиш "
+                "шарт эмас:\n\n"
+                "🚗 <b>Сўнгги эълонлар</b> — ҳозирги энг янги машиналар\n"
+                "⚙️ <b>Фильтрлар</b> — бренд, модел, юриш, йил ва жойни танлаш\n"
+                "❓ <b>Ёрдам</b> — қисқа қўлланма\n\n"
+                "Ҳеч нарса танламасангиз ҳам ишлайверади — барча янги эълонлар "
+                "келади. Керак бўлса, кейин торайтирасиз."),
+    "help_full": ("❓ <b>Қандай ишлайди?</b>\n\n"
+                  "Мен ҳар <b>10 дақиқада</b> olx.uz, avtoelon.uz ва avto.uz "
+                  "сайтларини текшираман. Янги машина пайдо бўлса — сизга "
+                  "дарҳол юбораман. Бир эълон икки марта юборилмайди.\n\n"
+                  "<b>Пастдаги тугмалар:</b>\n"
+                  "🚗 <b>Сўнгги эълонлар</b> — ҳозирги энг янгилари\n"
+                  "⚙️ <b>Фильтрлар</b> — нима керак эканини танлаш\n\n"
+                  "<b>Фильтрлар ичида:</b>\n"
+                  "🚗 Бренд · 🚙 Модел · 🛣 Юриш (км) · 📅 Йил · 📍 Жой\n\n"
+                  "<i>Ҳеч нарса танламасангиз — барчаси келади. "
+                  "Танласангиз — фақат ўшалари.</i>\n\n"
+                  "Хабарларни тўхтатиш: «⚙️ Фильтрлар» → /stop"),
+    "nothing_matches": ("🔍 Ҳозирча сизнинг фильтрингизга мос эълон йўқ.\n\n"
+                        "Фильтрни бироз кенгайтириб кўринг — «⚙️ Фильтрлар» → "
+                        "«🧹 Ҳаммасини тозалаш»."),
+    "announce_location": (
+        "🎉 <b>Янгилик: жой бўйича фильтр ва янги, осон меню!</b>\n\n"
+        "📍 <b>Жой бўйича фильтр</b> қўшилди — Тошкент шаҳри, Чирчиқ, Келес, "
+        "Қибрай, Зангиота, Янгийўл, Олмалиқ, Ангрен, Нурафшон ва бошқалар.\n\n"
+        "⌨️ Энди <b>ҳеч қандай буйруқ ёзиш шарт эмас</b> — пастда доимий "
+        "тугмалар пайдо бўлди:\n"
+        "🚗 Сўнгги эълонлар · ⚙️ Фильтрлар · ❓ Ёрдам\n\n"
+        "⚙️ <b>Фильтрлар</b> тугмасини боссангиз — бренд, модел, юриш, йил ва "
+        "жой бир экранда кўринади, ҳозирги танловингиз билан бирга. "
+        "Битта босишда ўзгартирасиз.\n\n"
+        "Ҳозироқ синаб кўринг 👇"),
     "ice": "⛽",
     "ev": "🔋",
 }
@@ -186,6 +247,8 @@ BOT_COMMANDS = [
     {"command": "models", "description": "Моделларни танлаш"},
     {"command": "mileage", "description": "Юриш (км) оралиғини танлаш"},
     {"command": "year", "description": "Йилни танлаш"},
+    {"command": "location", "description": "Жойни танлаш"},
+    {"command": "filters", "description": "Барча фильтрлар"},
     {"command": "stop", "description": "Хабарларни тўхтатиш"},
     {"command": "start", "description": "Қайта бошлаш"},
     {"command": "help", "description": "Ёрдам"},
@@ -313,7 +376,7 @@ def model_brand_keyboard(tg_id: int) -> dict:
             row = []
     if row:
         rows.append(row)
-    rows.append([{"text": T["back"], "callback_data": "p:0"}])
+    rows.append([{"text": T["back"], "callback_data": "hub"}])
     return {"inline_keyboard": rows}
 
 
@@ -356,7 +419,7 @@ def _bucket_keyboard(chosen: set, keys, labels, prefix: str, clear_cb: str) -> d
     if row:
         rows.append(row)
     rows.append([{"text": T["all_mileage"], "callback_data": clear_cb}])
-    rows.append([{"text": T["back"], "callback_data": "p:0"},
+    rows.append([{"text": T["back"], "callback_data": "hub"},
                  {"text": T["done"], "callback_data": "done"}])
     return {"inline_keyboard": rows}
 
@@ -381,6 +444,81 @@ def mileage_summary(tg_id: int) -> str:
 
 def year_summary(tg_id: int) -> str:
     return _summary(botdb.get_years(tg_id), YEAR_KEYS, YEAR_LABELS, T["every_year"])
+
+
+# The bottom menu is always on screen, so nothing here needs a typed command. Novices
+# never have to discover that commands exist at all.
+def main_menu() -> dict:
+    return {"keyboard": [[{"text": T["menu_latest"]}],
+                         [{"text": T["menu_filters"]}, {"text": T["menu_help"]}]],
+            "resize_keyboard": True, "is_persistent": True}
+
+
+LOC_KEYS = loclib.LOCATION_KEYS
+LOC_LABELS = loclib.LOCATION_LABELS
+LOCS_PER_PAGE = 12
+
+
+def location_keyboard(tg_id: int, page: int = 0) -> dict:
+    chosen = botdb.get_locations(tg_id)
+    pages = max(1, (len(LOC_KEYS) + LOCS_PER_PAGE - 1) // LOCS_PER_PAGE)
+    page = max(0, min(page, pages - 1))
+    start = page * LOCS_PER_PAGE
+
+    rows, row = [], []
+    for key in LOC_KEYS[start:start + LOCS_PER_PAGE]:
+        mark = "✅ " if key in chosen else ""
+        row.append({"text": f"{mark}{LOC_LABELS[key]}", "callback_data": f"lc:{key}"})
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+
+    nav = []
+    if page > 0:
+        nav.append({"text": "◀️", "callback_data": f"lp:{page - 1}"})
+    nav.append({"text": f"{page + 1}/{pages}", "callback_data": "noop"})
+    if page < pages - 1:
+        nav.append({"text": "▶️", "callback_data": f"lp:{page + 1}"})
+    rows.append(nav)
+    rows.append([{"text": T["all_mileage"], "callback_data": "lcall"}])
+    rows.append([{"text": T["back"], "callback_data": "hub"},
+                 {"text": T["done"], "callback_data": "done"}])
+    return {"inline_keyboard": rows}
+
+
+def location_summary(tg_id: int) -> str:
+    chosen = botdb.get_locations(tg_id)
+    if not chosen or set(chosen) >= set(LOC_KEYS):
+        return T["every_loc"]
+    return ", ".join(LOC_LABELS[k] for k in LOC_KEYS if k in chosen)
+
+
+def hub_keyboard() -> dict:
+    """One screen, one tap to every filter - the whole point of the hub."""
+    return {"inline_keyboard": [
+        [{"text": T["all_brands"].replace("🌍 ", "🚗 "), "callback_data": "p:0"},
+         {"text": T["models_btn"], "callback_data": "mods"}],
+        [{"text": T["mileage_btn"], "callback_data": "km"},
+         {"text": T["year_btn"], "callback_data": "yr"}],
+        [{"text": T["loc_btn"], "callback_data": "lp:0"}],
+        [{"text": T["clear_all"], "callback_data": "clearall"}],
+        [{"text": T["done"], "callback_data": "done"}],
+    ]}
+
+
+def hub_text(tg_id: int) -> str:
+    """Current settings, spelled out, so nothing is hidden behind a menu."""
+    brands_sel = botdb.get_brands(tg_id)
+    models_sel = botdb.get_models(tg_id)
+    model_bits = [f"{b}: {', '.join(sorted(m))}" for b, m in sorted(models_sel.items()) if m]
+    return T["hub"].format(
+        brands=esc(", ".join(sorted(brands_sel)) if brands_sel else T["hub_none"]),
+        models=esc(", ".join(model_bits) if model_bits else T["hub_none"]),
+        mileage=esc(mileage_summary(tg_id)),
+        years=esc(year_summary(tg_id)),
+        locs=esc(location_summary(tg_id)))
 
 
 def admin_keyboard(tg_id: int, blocked: bool) -> dict:
@@ -484,22 +622,33 @@ class Bot:
             botdb.set_user_field(tg_user["id"], "phone", contact.get("phone_number"))
             botdb.set_user_field(tg_user["id"], "state", "active")
             fresh = botdb.get_user(tg_user["id"])
-            self.tg.send(chat_id, T["registered"], reply_markup={"remove_keyboard": True})
-            self.tg.send(chat_id, T["brand_prompt"],
-                         reply_markup=brand_keyboard(tg_user["id"], 0))
+            self.tg.send(chat_id, T["onboard"], reply_markup=main_menu())
+            self.cmd_latest(chat_id, fresh)
             self.notify_admin_new_user(fresh)
             return
 
         text = (msg.get("text") or "").strip()
-        command = text.split()[0].lower().lstrip("/").split("@")[0] if text else ""
+        # The bottom-menu buttons arrive as ordinary text. Mapping them onto the same
+        # commands means a subscriber never has to know commands exist.
+        BUTTONS = {T["menu_latest"]: "latest",
+                   T["menu_filters"]: "filters",
+                   T["menu_help"]: "help"}
+        if text in BUTTONS:
+            command = BUTTONS[text]
+        else:
+            command = text.split()[0].lower().lstrip("/").split("@")[0] if text else ""
 
         if command == "start":
             if user.get("state") != "active" or not user.get("phone"):
                 self.tg.send(chat_id, T["welcome"], reply_markup=contact_keyboard())
                 return
+            self.tg.send(chat_id, T["onboard"], reply_markup=main_menu())
             self.cmd_latest(chat_id, user)
-            self.tg.send(chat_id, T["brand_prompt"],
-                         reply_markup=brand_keyboard(tg_user["id"], 0))
+        elif command in ("filters", "filter", "sozlama"):
+            self.tg.send(chat_id, hub_text(tg_user["id"]), reply_markup=hub_keyboard())
+        elif command in ("location", "region", "joy", "city"):
+            self.tg.send(chat_id, T["loc_prompt"],
+                         reply_markup=location_keyboard(tg_user["id"], 0))
         elif command in ("year", "yil", "god"):
             self.tg.send(chat_id, T["year_prompt"],
                          reply_markup=year_keyboard(tg_user["id"]))
@@ -517,11 +666,12 @@ class Bot:
             botdb.set_user_field(tg_user["id"], "state", "paused")
             self.tg.send(chat_id, T["paused"])
         elif command == "help":
-            self.tg.send(chat_id, T["help"])
+            self.tg.send(chat_id, T["help_full"], reply_markup=main_menu())
         elif command == "admin" and is_admin:
             self.cmd_admin(chat_id)
         else:
-            self.tg.send(chat_id, T["unknown"])
+            # Anything unrecognised: show the menu rather than scold them.
+            self.tg.send(chat_id, T["help_full"], reply_markup=main_menu())
 
     def _extra_scope(self, tg_id: int, separator: str = " · ") -> str:
         """The mileage/year part of a subscription summary, omitted when unrestricted."""
@@ -583,7 +733,12 @@ class Bot:
         chosen = botdb.get_brands(user["tg_id"])
         rows = botdb.latest_for(user["tg_id"], chosen, LATEST_ON_START)
         if not rows:
-            self.tg.send(chat_id, T["empty_catalogue"])
+            has_filters = (botdb.get_brands(user["tg_id"]) or botdb.get_bands(user["tg_id"])
+                           or botdb.get_years(user["tg_id"])
+                           or botdb.get_locations(user["tg_id"]))
+            self.tg.send(chat_id,
+                         T["nothing_matches"] if has_filters else T["empty_catalogue"],
+                         reply_markup=main_menu())
             return
         scope = self.scope_text(user["tg_id"], chosen)
         header = T["latest_header"].format(n=len(rows), scope=esc(scope))
@@ -701,6 +856,43 @@ class Bot:
                 self.tg.edit_markup(chat_id, message_id, reply_markup=year_keyboard(tg_id))
             return
 
+        if data == "hub":
+            self.tg.edit(chat_id, message_id, hub_text(tg_id),
+                         reply_markup=hub_keyboard())
+            self.tg.answer_callback(cq_id)
+            return
+
+        if data.startswith("lp:"):
+            self.tg.edit(chat_id, message_id, T["loc_prompt"],
+                         reply_markup=location_keyboard(tg_id, int(data.split(":")[1])))
+            self.tg.answer_callback(cq_id)
+            return
+
+        if data.startswith("lc:"):
+            key = data.split(":", 1)[1]
+            if key in LOC_KEYS:
+                selected = botdb.toggle_location(tg_id, key)
+                label = LOC_LABELS[key]
+                tkey = "loc_added" if selected else "loc_removed"
+                self.tg.answer_callback(cq_id, T[tkey].format(name=label))
+                self.tg.edit_markup(chat_id, message_id,
+                                    reply_markup=location_keyboard(tg_id, 0))
+            return
+
+        if data == "lcall":
+            botdb.clear_locations(tg_id)
+            self.tg.answer_callback(cq_id, T["locs_cleared"])
+            self.tg.edit_markup(chat_id, message_id,
+                                reply_markup=location_keyboard(tg_id, 0))
+            return
+
+        if data == "clearall":
+            botdb.clear_all_filters(tg_id)
+            self.tg.answer_callback(cq_id, T["clear_all_done"])
+            self.tg.edit(chat_id, message_id, hub_text(tg_id),
+                         reply_markup=hub_keyboard())
+            return
+
         if data == "yrall":
             botdb.clear_years(tg_id)
             self.tg.answer_callback(cq_id, T["years_cleared"])
@@ -757,7 +949,8 @@ class Bot:
             return
 
         if data == "done":
-            self.tg.edit(chat_id, message_id, self.scope_summary(tg_id))
+            self.tg.edit(chat_id, message_id, hub_text(tg_id))
+            self.tg.send(chat_id, T["hub_saved"], reply_markup=main_menu())
             self.tg.answer_callback(cq_id, T["saved_cb"])
             return
 

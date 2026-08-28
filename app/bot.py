@@ -12,6 +12,7 @@ import time
 
 import botdb
 import brands as brandlib
+import carfilters as cf
 import models as modellib
 from telegram_api import Telegram, esc
 
@@ -68,10 +69,14 @@ T = {
     "mileage_na": "юриши номаълум",
     "km_new": "0 км (янги)",
     "listing_fallback": "Эълон",
+    "pick_brand_first_toast": "Аввал брендни танланг.",
     "models_btn": "🚙 Моделлар",
     "model_prompt": ("🚙 <b>{brand}</b> — қайси моделлар керак?\n"
                      "<i>Ҳеч бири танланмаса, ушбу бренднинг барча моделлари юборилади.</i>"),
-    "pick_brand_first": "Аввал камида битта брендни танланг.",
+    "pick_brand_first": ("⚠️ <b>Аввал брендни танлашингиз керак.</b>\n\n"
+                         "Моделни танлаш учун дастлаб қайси бренд кераклигини "
+                         "белгиланг — сўнг ўша бренднинг моделлари рўйхати очилади.\n\n"
+                         "Қуйидан брендни танланг 👇"),
     "choose_brand_for_models": ("🚙 <b>Модел танлаш</b>\n"
                                 "<i>Қайси бренд ичидан модел танламоқчисиз?</i>"),
     "no_models": "Бу бренд учун моделлар рўйхати ҳозирча йўқ — барча эълонлар юборилади.",
@@ -96,10 +101,6 @@ T = {
     "mileage_removed": "{name} олиб ташланди",
     "mileage_cleared": "Барча оралиқлар (чеклов олиб ташланди)",
     "every_mileage": "барча оралиқлар",
-    "km_label_under50": "50 000 км гача",
-    "km_label_under100": "50 000 – 100 000 км",
-    "km_label_under150": "100 000 – 150 000 км",
-    "km_label_unknown": "Кўрсатилмаган",
     "announce_mileage": (
         "🎉 <b>Янгилик: юриш (км) бўйича фильтр қўшилди!</b>\n\n"
         "Энди машина қанча юрганини ҳам танлашингиз мумкин:\n"
@@ -112,42 +113,44 @@ T = {
         "Ҳозироқ синаб кўринг 👇\n"
         "/mileage — юриш оралиғини танлаш\n"
         "/brands — бренд · /models — модел"),
-    "band_under50":  "<b>━━ 🥇 50 000 км гача ━━</b>",
-    "band_under100": "<b>━━ 🥈 50 000 – 100 000 км ━━</b>",
-    "band_under150": "<b>━━ 🥉 100 000 – 150 000 км ━━</b>",
-    "band_unknown":  "<b>━━ ❔ Юриши кўрсатилмаган ━━</b>",
+    "year_btn": "📅 Йил",
+    "year_prompt": ("📅 <b>Қайси йилги машиналар керак?</b>\n"
+                    "<i>Керакли йилларни белгиланг. Ҳеч нарса танланмаса, "
+                    "барча йиллар юборилади.</i>"),
+    "year_added": "{name} қўшилди",
+    "year_removed": "{name} олиб ташланди",
+    "years_cleared": "Барча йиллар (чеклов олиб ташланди)",
+    "every_year": "барча йиллар",
+    "announce_filters": (
+        "🎉 <b>Янгилик: фильтрлар анча кенгайди!</b>\n\n"
+        "🛣 <b>Юриш (км)</b> энди 10 та аниқ оралиқда:\n"
+        "0–10 минг · 10–20 · 20–30 · 30–40 · 40–50 · 50–70 · 70–100 · "
+        "100–150 · 150–200 · 200 мингдан юқори\n\n"
+        "📅 <b>Йил бўйича фильтр</b> ҳам қўшилди — 2026 дан 2009 ва ундан "
+        "олдингисигача.\n\n"
+        "Энди керагини аниқ танлашингиз мумкин: масалан, "
+        "<b>20–30 минг км</b> ва <b>2024</b> йил.\n\n"
+        "Ҳозироқ синаб кўринг 👇\n"
+        "/mileage — юриш оралиғи\n"
+        "/year — йил\n"
+        "/brands — бренд · /models — модел"),
     "ice": "⛽",
     "ev": "🔋",
 }
 
-# Mileage bands, mirrored from ev_hunter.mileage_tier so the grouping in the message
-# always matches the grouping the filter assigned.
-BAND_ORDER = {"under50": 0, "under100": 1, "under150": 2, "unknown": 3}
-BAND_TITLES = {
-    "under50":  T["band_under50"],
-    "under100": T["band_under100"],
-    "under150": T["band_under150"],
-    "unknown":  T["band_unknown"],
-}
+# Message grouping uses the same buckets as the filter, so a listing can never be
+# grouped under one heading and filtered by another.
+BAND_ORDER = {key: i for i, key in enumerate(cf.MILEAGE_KEYS)}
+BAND_TITLES = {key: f"<b>━━ {label} ━━</b>" for key, label in cf.MILEAGE_LABELS.items()}
 
 
 def band_of(row: dict) -> str:
-    """Derive the band from the mileage itself.
+    """Bucket for a listing, derived from its mileage rather than the stored tier.
 
-    Deliberately not trusting the stored `tier`: rows catalogued before the bands
-    existed carry legacy values like "top"/"stretch", and recomputing keeps them
-    grouped correctly without a migration.
+    Rows catalogued under the older schemes carry legacy tier values, so recomputing
+    keeps everything grouped correctly without a migration.
     """
-    km = row.get("mileage_km")
-    if km is None:
-        return "unknown"
-    if km < 50_000:
-        return "under50"
-    if km < 100_000:
-        return "under100"
-    if km <= 150_000:
-        return "under150"
-    return "unknown"
+    return cf.mileage_band(row.get("mileage_km"))
 
 
 BOT_COMMANDS = [
@@ -155,6 +158,7 @@ BOT_COMMANDS = [
     {"command": "brands", "description": "Брендларни танлаш"},
     {"command": "models", "description": "Моделларни танлаш"},
     {"command": "mileage", "description": "Юриш (км) оралиғини танлаш"},
+    {"command": "year", "description": "Йилни танлаш"},
     {"command": "stop", "description": "Хабарларни тўхтатиш"},
     {"command": "start", "description": "Қайта бошлаш"},
     {"command": "help", "description": "Ёрдам"},
@@ -254,8 +258,8 @@ def brand_keyboard(tg_id: int, page: int = 0) -> dict:
     rows.append([{"text": T["all_brands"], "callback_data": f"all:{page}"},
                  {"text": T["clear"], "callback_data": f"none:{page}"}])
     models_row = models_button_row(tg_id)
-    extras = models_row + [{"text": T["mileage_btn"], "callback_data": "km"}]
-    rows.append(extras)
+    rows.append(models_row + [{"text": T["mileage_btn"], "callback_data": "km"},
+                              {"text": T["year_btn"], "callback_data": "yr"}])
     rows.append([{"text": T["done"], "callback_data": "done"}])
     return {"inline_keyboard": rows}
 
@@ -306,35 +310,50 @@ def model_keyboard(tg_id: int, brand: str) -> dict:
     return {"inline_keyboard": rows}
 
 
-# Short labels for the band picker, keyed by the same names botdb validates against.
-BAND_LABELS = {
-    "under50":  T["km_label_under50"],
-    "under100": T["km_label_under100"],
-    "under150": T["km_label_under150"],
-    "unknown":  T["km_label_unknown"],
-}
-BAND_ICONS = {"under50": "🥇", "under100": "🥈", "under150": "🥉", "unknown": "❔"}
-BAND_KEYS = ("under50", "under100", "under150", "unknown")
+# Both pickers are generated from carfilters, so adding a bucket there is enough.
+BAND_KEYS = cf.MILEAGE_KEYS
+BAND_LABELS = cf.MILEAGE_LABELS
+YEAR_KEYS = cf.YEAR_KEYS
+YEAR_LABELS = cf.YEAR_LABELS
 
 
-def mileage_keyboard(tg_id: int) -> dict:
-    chosen = botdb.get_bands(tg_id)
-    rows = []
-    for key in BAND_KEYS:
+def _bucket_keyboard(chosen: set, keys, labels, prefix: str, clear_cb: str) -> dict:
+    """Two buckets per row, ticked where selected, then clear-all / back / done."""
+    rows, row = [], []
+    for key in keys:
         mark = "✅ " if key in chosen else ""
-        rows.append([{"text": f"{mark}{BAND_ICONS[key]} {BAND_LABELS[key]}",
-                      "callback_data": f"km:{key}"}])
-    rows.append([{"text": T["all_mileage"], "callback_data": "kmall"}])
+        row.append({"text": f"{mark}{labels[key]}", "callback_data": f"{prefix}{key}"})
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([{"text": T["all_mileage"], "callback_data": clear_cb}])
     rows.append([{"text": T["back"], "callback_data": "p:0"},
                  {"text": T["done"], "callback_data": "done"}])
     return {"inline_keyboard": rows}
 
 
+def mileage_keyboard(tg_id: int) -> dict:
+    return _bucket_keyboard(botdb.get_bands(tg_id), BAND_KEYS, BAND_LABELS, "km:", "kmall")
+
+
+def year_keyboard(tg_id: int) -> dict:
+    return _bucket_keyboard(botdb.get_years(tg_id), YEAR_KEYS, YEAR_LABELS, "yr:", "yrall")
+
+
+def _summary(chosen: set, keys, labels, every: str) -> str:
+    if not chosen or set(chosen) >= set(keys):
+        return every
+    return ", ".join(labels[k] for k in keys if k in chosen)
+
+
 def mileage_summary(tg_id: int) -> str:
-    chosen = botdb.get_bands(tg_id)
-    if not chosen or set(chosen) >= set(BAND_KEYS):
-        return T["every_mileage"]
-    return ", ".join(BAND_LABELS[k] for k in BAND_KEYS if k in chosen)
+    return _summary(botdb.get_bands(tg_id), BAND_KEYS, BAND_LABELS, T["every_mileage"])
+
+
+def year_summary(tg_id: int) -> str:
+    return _summary(botdb.get_years(tg_id), YEAR_KEYS, YEAR_LABELS, T["every_year"])
 
 
 def admin_keyboard(tg_id: int, blocked: bool) -> dict:
@@ -454,6 +473,9 @@ class Bot:
             self.cmd_latest(chat_id, user)
             self.tg.send(chat_id, T["brand_prompt"],
                          reply_markup=brand_keyboard(tg_user["id"], 0))
+        elif command in ("year", "yil", "god"):
+            self.tg.send(chat_id, T["year_prompt"],
+                         reply_markup=year_keyboard(tg_user["id"]))
         elif command in ("mileage", "km", "probeg"):
             self.tg.send(chat_id, T["mileage_prompt"],
                          reply_markup=mileage_keyboard(tg_user["id"]))
@@ -481,24 +503,31 @@ class Bot:
         else:
             self.tg.send(chat_id, T["unknown"])
 
+    def _extra_scope(self, tg_id: int, separator: str = " · ") -> str:
+        """The mileage/year part of a subscription summary, omitted when unrestricted."""
+        bits = []
+        km = mileage_summary(tg_id)
+        if km != T["every_mileage"]:
+            bits.append("🛣 " + km)
+        yr = year_summary(tg_id)
+        if yr != T["every_year"]:
+            bits.append("📅 " + yr)
+        return (separator + separator.join(bits)) if bits else ""
+
     def scope_text(self, tg_id: int, chosen: set) -> str:
         if not chosen:
-            km = mileage_summary(tg_id)
-            return (T["all_brands_scope"] if km == T["every_mileage"]
-                    else f"{T['all_brands_scope']} · 🛣 {km}")
+            return T["all_brands_scope"] + self._extra_scope(tg_id)
         picked = botdb.get_models(tg_id)
         parts = []
         for brand in sorted(chosen):
             models = sorted(picked.get(brand, ()))
             parts.append(f"{brand}: {', '.join(models)}" if models else brand)
         text = ", ".join(parts)
-        km = mileage_summary(tg_id)
-        return f"{text} · 🛣 {km}" if km != T["every_mileage"] else text
+        return text + self._extra_scope(tg_id)
 
     def scope_summary(self, tg_id: int) -> str:
         """Human-readable description of what this user is subscribed to."""
         chosen = botdb.get_brands(tg_id)
-        km = mileage_summary(tg_id)
         if not chosen:
             scope = T["every_brand"]
         else:
@@ -508,10 +537,7 @@ class Bot:
                 models = sorted(picked.get(brand, ()))
                 parts.append(f"{brand} ({', '.join(models)})" if models else brand)
             scope = ", ".join(parts)
-        if km != T["every_mileage"]:
-            scope = scope + "\n🛣 " + km
-        return T["saved"].format(scope=esc(scope))
-
+        return T["saved"].format(scope=esc(scope + self._extra_scope(tg_id, "\n")))
 
     def cmd_latest(self, chat_id: int, user: dict) -> None:
         chosen = botdb.get_brands(user["tg_id"])
@@ -620,11 +646,33 @@ class Bot:
             self.tg.edit_markup(chat_id, message_id, reply_markup=mileage_keyboard(tg_id))
             return
 
+        if data == "yr":
+            self.tg.edit(chat_id, message_id, T["year_prompt"],
+                         reply_markup=year_keyboard(tg_id))
+            self.tg.answer_callback(cq_id)
+            return
+
+        if data.startswith("yr:"):
+            yband = data.split(":", 1)[1]
+            if yband in YEAR_KEYS:
+                selected = botdb.toggle_year(tg_id, yband)
+                key = "year_added" if selected else "year_removed"
+                self.tg.answer_callback(cq_id, T[key].format(name=YEAR_LABELS[yband]))
+                self.tg.edit_markup(chat_id, message_id, reply_markup=year_keyboard(tg_id))
+            return
+
+        if data == "yrall":
+            botdb.clear_years(tg_id)
+            self.tg.answer_callback(cq_id, T["years_cleared"])
+            self.tg.edit_markup(chat_id, message_id, reply_markup=year_keyboard(tg_id))
+            return
+
         # ---- model drill-down ----------------------------------------------------
         if data == "mods":
             chosen = [b for b in botdb.get_brands(tg_id) if modellib.has_models(b)]
             if not chosen:
-                self.tg.answer_callback(cq_id, T["pick_brand_first"], alert=True)
+                self.tg.answer_callback(cq_id, T["pick_brand_first_toast"],
+                                        alert=True)
                 return
             self.tg.edit(chat_id, message_id, T["choose_brand_for_models"],
                          reply_markup=model_brand_keyboard(tg_id))

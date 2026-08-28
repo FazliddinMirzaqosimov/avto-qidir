@@ -38,6 +38,8 @@ import tempfile
 import time
 import traceback
 import unicodedata
+
+import carfilters
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -89,9 +91,9 @@ DEFAULT_CONFIG = {
     "telegram": {"bot_token": "", "chat_id": "", "admin_chat_id": ""},
     "filters": {
         "max_price_usd": 15000,
-        "min_year": 2022,
+        "min_year": 2005,
         "ideal_max_mileage_km": 50000,
-        "hard_max_mileage_km": 150000,
+        "hard_max_mileage_km": 1000000,
         "regions": ["tashkent", "toshkent", "ташкент", "тошкент"],
         "first_run_backfill_days": 7,
         "max_owners": 0,
@@ -1408,22 +1410,9 @@ def in_target_region(listing: Listing, regions: list[str]) -> bool:
     return not listing.city
 
 
-# Listings are grouped by how far they have run. The bands are shared by the filter,
-# the database and the Telegram renderer so a car cannot land in two different groups.
-MILEAGE_BANDS = (
-    ("under50",  50_000),
-    ("under100", 100_000),
-    ("under150", 150_000),
-)
-
-
+# Grouping is defined once in carfilters and shared with the bot and the database.
 def mileage_tier(km: int | None) -> str:
-    if km is None:
-        return "unknown"
-    for name, ceiling in MILEAGE_BANDS:
-        if km < ceiling:
-            return name
-    return "unknown"
+    return carfilters.mileage_band(km)
 
 
 def evaluate(listing: Listing, cfg: dict) -> tuple[bool, str, str]:

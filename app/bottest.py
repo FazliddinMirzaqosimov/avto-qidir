@@ -15,6 +15,7 @@ os.environ["EV_HUNTER_DATA_DIR"] = _TMP
 import bot as botmod        # noqa: E402
 import botdb                # noqa: E402
 import brands as brandlib   # noqa: E402
+from ev_hunter import mileage_tier as ev_tier  # noqa: E402
 
 PASS = FAIL = 0
 
@@ -281,12 +282,12 @@ class CaptureTG:
         return self.send_checked(*a, **k)[0]
 
 
-check("band_of <50k", botmod.band_of({"mileage_km": 12000}) == "under50")
-check("band_of 50k boundary", botmod.band_of({"mileage_km": 50000}) == "under100")
-check("band_of 100k boundary", botmod.band_of({"mileage_km": 100000}) == "under150")
-check("band_of none", botmod.band_of({"mileage_km": None}) == "unknown")
+check("band_of 12k", botmod.band_of({"mileage_km": 12000}) == "km10_20")
+check("band_of 50k boundary", botmod.band_of({"mileage_km": 50000}) == "km50_70")
+check("band_of 100k boundary", botmod.band_of({"mileage_km": 100000}) == "km100_150")
+check("band_of none", botmod.band_of({"mileage_km": None}) == "km_unknown")
 check("legacy tier row grouped by km, not by stored tier",
-      botmod.band_of({"mileage_km": 70000, "tier": "stretch"}) == "under100")
+      botmod.band_of({"mileage_km": 70000, "tier": "stretch"}) == "km70_100")
 
 _cfg2 = {"telegram": {"bot_token": "x", "chat_id": "1", "admin_chat_id": "1"},
          "runtime": {"max_items_per_message": 50}}
@@ -294,7 +295,7 @@ _b2 = botmod.Bot(_cfg2, lambda *a, **k: None)
 _b2.tg = CaptureTG()
 mixed = [
     {"key": "a", "title": "High km", "url": "u", "price_usd": 9000, "year": 2022,
-     "mileage_km": 130000, "brand": "Chevrolet", "source": "OLX", "fuel": "benzin"},
+     "mileage_km": 120000, "brand": "Chevrolet", "source": "OLX", "fuel": "benzin"},
     {"key": "b", "title": "Low km", "url": "u", "price_usd": 14000, "year": 2025,
      "mileage_km": 9000, "brand": "BYD", "source": "OLX", "fuel": "EV"},
     {"key": "c", "title": "No km", "url": "u", "price_usd": 11000, "year": 2023,
@@ -306,10 +307,10 @@ sent = _b2.send_listings(1, mixed, "HDR")
 body = _b2.tg.msgs[0]
 check("all four delivered", len(sent) == 4, sent)
 check("all band headings present",
-      all(h in body for h in (botmod.T["band_under50"], botmod.T["band_under100"],
-                              botmod.T["band_under150"], botmod.T["band_unknown"])))
-order = [body.index(botmod.T[k]) for k in
-         ("band_under50", "band_under100", "band_under150", "band_unknown")]
+      all(botmod.BAND_TITLES[k] in body for k in
+          ("km0_10", "km70_100", "km100_150", "km_unknown")))
+order = [body.index(botmod.BAND_TITLES[k]) for k in
+         ("km0_10", "km70_100", "km100_150", "km_unknown")]
 check("bands ordered best mileage first", order == sorted(order), order)
 check("petrol listing shows fuel-pump icon", "\u26fd" in body)
 check("electric listing shows battery icon", "\U0001f50b" in body)
@@ -421,117 +422,142 @@ check("announce is Cyrillic", CYR.search(botmod.T["announce"]) is not None)
 check("announce mentions models", "модел" in botmod.T["announce"].lower())
 check("announce points at /brands", "/brands" in botmod.T["announce"])
 
-print("\n=== 16. mileage-band filter ===")
+print("\n=== 16. mileage buckets ===")
+import carfilters as cf  # noqa: E402
+
+check("ten ranges plus unknown", len(cf.MILEAGE_KEYS) == 11, len(cf.MILEAGE_KEYS))
+edges = [(0, "km0_10"), (9999, "km0_10"), (10000, "km10_20"), (19999, "km10_20"),
+         (20000, "km20_30"), (30000, "km30_40"), (40000, "km40_50"), (49999, "km40_50"),
+         (50000, "km50_70"), (69999, "km50_70"), (70000, "km70_100"),
+         (99999, "km70_100"), (100000, "km100_150"), (149999, "km100_150"),
+         (150000, "km150_200"), (199999, "km150_200"), (200000, "km200_plus"),
+         (999999, "km200_plus"), (None, "km_unknown")]
+bad = [(km, want, cf.mileage_band(km)) for km, want in edges if cf.mileage_band(km) != want]
+check("every boundary lands in the right bucket", not bad, bad)
+check("buckets are contiguous - no km falls through",
+      all(cf.mileage_band(k) != "km_unknown" for k in range(0, 300000, 997)))
+
+print("\n=== 17. year buckets ===")
+yedges = [(2026, "y2026"), (2025, "y2025"), (2024, "y2024"), (2023, "y2023"),
+          (2022, "y2022"), (2021, "y2020_2021"), (2020, "y2020_2021"),
+          (2019, "y2018_2019"), (2017, "y2015_2017"), (2015, "y2015_2017"),
+          (2014, "y2010_2014"), (2010, "y2010_2014"), (2009, "y_older"),
+          (1995, "y_older"), (None, "y_unknown")]
+ybad = [(y, w, cf.year_band(y)) for y, w in yedges if cf.year_band(y) != w]
+check("every year lands in the right bucket", not ybad, ybad)
+
+print("\n=== 18. bucket filtering ===")
 botdb.set_brands(1200, [])
 botdb.clear_bands(1200)
-km_rows = [
-    ("OLX:k1", "Low km car", 9000, 12000),
-    ("OLX:k2", "Mid km car", 9000, 70000),
-    ("OLX:k3", "High km car", 9000, 130000),
-    ("OLX:k4", "No km car", 9000, None),
-]
-for key, title, price, km in km_rows:
-    fl = FakeListing(key, title, price)
-    fl.mileage_km = km
-    botdb.upsert_listing(fl, "BYD", "under50", None)
+botdb.clear_years(1200)
+samples = [("OLX:b1", 5000, 2026), ("OLX:b2", 15000, 2024), ("OLX:b3", 25000, 2022),
+           ("OLX:b4", 65000, 2019), ("OLX:b5", 180000, 2012), ("OLX:b6", 250000, 2008),
+           ("OLX:b7", None, None)]
+SKEYS = {k for k, _, _ in samples}
+for key, km, yr in samples:
+    fl = FakeListing(key, f"Car {key}", 9000)
+    fl.mileage_km, fl.year = km, yr
+    botdb.upsert_listing(fl, "BYD", cf.mileage_band(km), None)
+
 
 def keys_for(uid):
-    return {r["key"] for r in botdb.undelivered_for(uid, None, 50)}
+    return {r["key"] for r in botdb.undelivered_for(uid, None, 200)} & SKEYS
 
-check("no band selected means every band",
-      {"OLX:k1", "OLX:k2", "OLX:k3", "OLX:k4"} <= keys_for(1200))
 
-check("toggle_band returns True", botdb.toggle_band(1200, "under50") is True)
-sel = keys_for(1200)
-check("under50 keeps the low-km car", "OLX:k1" in sel)
-check("under50 drops the 70k car", "OLX:k2" not in sel, sorted(sel))
-check("under50 drops the 130k car", "OLX:k3" not in sel)
-check("under50 drops the unknown-km car", "OLX:k4" not in sel)
+check("nothing selected means everything", keys_for(1200) == SKEYS, keys_for(1200))
 
-botdb.toggle_band(1200, "under150")
-two = keys_for(1200)
-check("two bands are a union", "OLX:k1" in two and "OLX:k3" in two)
-check("unselected band still excluded", "OLX:k2" not in two)
-
-botdb.set_bands(1200, ["unknown"])
-unk = keys_for(1200)
-check("unknown band matches NULL mileage only",
-      unk & {"OLX:k1", "OLX:k2", "OLX:k3", "OLX:k4"} == {"OLX:k4"}, sorted(unk))
-
-botdb.set_bands(1200, list(botdb.BANDS))
-check("selecting every band behaves like no filter",
-      {"OLX:k1", "OLX:k2", "OLX:k3", "OLX:k4"} <= keys_for(1200))
-
+botdb.set_bands(1200, ["km0_10"])
+check("0-10k keeps only the 5 000 km car", keys_for(1200) == {"OLX:b1"}, keys_for(1200))
+botdb.set_bands(1200, ["km200_plus"])
+check("200k+ keeps only the 250 000 km car", keys_for(1200) == {"OLX:b6"})
+botdb.set_bands(1200, ["km0_10", "km150_200"])
+check("two distant buckets union correctly", keys_for(1200) == {"OLX:b1", "OLX:b5"})
+botdb.set_bands(1200, ["km_unknown"])
+check("unknown bucket matches the NULL-mileage car", keys_for(1200) == {"OLX:b7"})
+botdb.set_bands(1200, list(cf.MILEAGE_KEYS))
+check("all buckets behaves like no filter", keys_for(1200) == SKEYS)
 botdb.clear_bands(1200)
-check("clear_bands widens again",
-      {"OLX:k1", "OLX:k2", "OLX:k3", "OLX:k4"} <= keys_for(1200))
 
-check("boundary 50000 belongs to under100",
-      botmod.band_of({"mileage_km": 50000}) == "under100")
+botdb.set_years(1200, ["y2026"])
+check("year 2026 alone", keys_for(1200) == {"OLX:b1"})
+botdb.set_years(1200, ["y_older"])
+check("2009-and-older bucket", keys_for(1200) == {"OLX:b6"})
+botdb.set_years(1200, ["y_unknown"])
+check("unknown year bucket", keys_for(1200) == {"OLX:b7"})
+botdb.clear_years(1200)
 
-try:
-    botdb.toggle_band(1200, "under5000000")
-    check("rejects an unknown band", False, "no error raised")
-except ValueError:
-    check("rejects an unknown band", True)
+botdb.set_bands(1200, ["km10_20", "km20_30"])
+botdb.set_years(1200, ["y2024"])
+check("mileage AND year combine, not OR", keys_for(1200) == {"OLX:b2"}, keys_for(1200))
+botdb.clear_bands(1200)
+botdb.clear_years(1200)
+
+for bad_key, fn in (("km999", botdb.toggle_band), ("y9999", botdb.toggle_year)):
+    try:
+        fn(1200, bad_key)
+        check(f"rejects unknown bucket {bad_key}", False, "no error raised")
+    except ValueError:
+        check(f"rejects unknown bucket {bad_key}", True)
 try:
     botdb.set_bands(1200, ["'; DROP TABLE listings; --"])
     check("set_bands rejects injection", False, "no error raised")
 except ValueError:
     check("set_bands rejects injection", True)
 
-print("\n=== 17. mileage filter combines with brand and model ===")
-botdb.set_brands(1300, ["BYD"])
-b1 = FakeListing("OLX:c1", "BYD Seagull low", 9000); b1.mileage_km = 10000
-b2 = FakeListing("OLX:c2", "BYD Seagull high", 9000); b2.mileage_km = 120000
-b3 = FakeListing("OLX:c3", "BYD Dolphin low", 9000); b3.mileage_km = 10000
-botdb.upsert_listing(b1, "BYD", "under50", "Seagull")
-botdb.upsert_listing(b2, "BYD", "under150", "Seagull")
-botdb.upsert_listing(b3, "BYD", "under50", "Dolphin")
-botdb.set_models(1300, "BYD", ["Seagull"])
-botdb.set_bands(1300, ["under50"])
-combo = {r["key"] for r in botdb.undelivered_for(1300, {"BYD"}, 50)}
-check("brand+model+mileage all applied", "OLX:c1" in combo)
-check("wrong mileage excluded despite right model", "OLX:c2" not in combo)
-check("wrong model excluded despite right mileage", "OLX:c3" not in combo)
-check("/latest applies the mileage filter too",
-      all(r["mileage_km"] is not None and r["mileage_km"] < 50000
-          for r in botdb.latest_for(1300, {"BYD"}, 50)))
+print("\n=== 19. legacy coarse bands migrate ===")
+_c = botdb.connect()
+_c.execute("DELETE FROM user_bands WHERE tg_id=1500")
+for old in ("under50", "under100"):
+    _c.execute("INSERT INTO user_bands(tg_id,band) VALUES(1500,?)", (old,))
+_c.commit()
+_c.close()
+botdb.init()
+migrated = botdb.get_bands(1500)
+check("old under50 became the five fine buckets",
+      {"km0_10", "km10_20", "km20_30", "km30_40", "km40_50"} <= migrated, migrated)
+check("old under100 became 50-70 and 70-100", {"km50_70", "km70_100"} <= migrated)
+check("no legacy keys survive",
+      not (migrated & {"under50", "under100", "under150", "unknown"}))
 
-print("\n=== 18. mileage picker UI ===")
-botdb.set_bands(1400, ["under50"])
+print("\n=== 20. pickers ===")
+botdb.set_bands(1400, ["km20_30"])
 mkb = botmod.mileage_keyboard(1400)["inline_keyboard"]
-check("one row per band plus controls", len(mkb) == len(botmod.BAND_KEYS) + 2, len(mkb))
-check("selected band ticked",
-      any("✅" in b["text"] for r in mkb for b in r if "50 000 км гача" in b["text"]))
-check("mileage callbacks fit 64 bytes",
-      all(len(b.get("callback_data", "").encode()) <= 64 for r in mkb for b in r))
-check("has clear-all and done",
-      any(b["callback_data"] == "kmall" for r in mkb for b in r)
-      and any(b["callback_data"] == "done" for r in mkb for b in r))
-check("mileage summary names the band",
-      "50 000 км гача" in botmod.mileage_summary(1400))
-botdb.clear_bands(1400)
-check("summary says all when nothing chosen",
-      botmod.mileage_summary(1400) == botmod.T["every_mileage"])
-
+check("mileage picker lists every bucket",
+      sum(1 for r in mkb for b in r if b["callback_data"].startswith("km:"))
+      == len(cf.MILEAGE_KEYS))
+check("selected bucket ticked",
+      any("✅" in b["text"] and "20 000" in b["text"] for r in mkb for b in r))
+ykb = botmod.year_keyboard(1400)["inline_keyboard"]
+check("year picker lists every bucket",
+      sum(1 for r in ykb for b in r if b["callback_data"].startswith("yr:"))
+      == len(cf.YEAR_KEYS))
+check("all picker callbacks fit 64 bytes",
+      all(len(b.get("callback_data", "").encode()) <= 64 for r in mkb + ykb for b in r))
 bkb = botmod.brand_keyboard(1400, 0)["inline_keyboard"]
-check("mileage button on the brand keyboard",
-      any(b["callback_data"] == "km" for r in bkb for b in r))
+check("brand keyboard offers mileage and year",
+      any(b["callback_data"] == "km" for r in bkb for b in r)
+      and any(b["callback_data"] == "yr" for r in bkb for b in r))
 
-_b4 = botmod.Bot({"telegram": {"bot_token": "x", "chat_id": "1", "admin_chat_id": "1"},
+_b5 = botmod.Bot({"telegram": {"bot_token": "x", "chat_id": "1", "admin_chat_id": "1"},
                   "runtime": {"max_items_per_message": 5}}, lambda *a, **k: None)
-botdb.set_bands(1400, ["under50"])
-check("scope mentions the mileage choice",
-      "🛣" in _b4.scope_text(1400, botdb.get_brands(1400)),
-      _b4.scope_text(1400, botdb.get_brands(1400)))
-check("saved summary mentions mileage", "🛣" in _b4.scope_summary(1400))
+botdb.set_years(1400, ["y2024"])
+sc = _b5.scope_text(1400, botdb.get_brands(1400))
+check("scope shows both mileage and year", "🛣" in sc and "📅" in sc, sc)
+botdb.clear_bands(1400)
+botdb.clear_years(1400)
+check("scope stays clean when unrestricted",
+      "🛣" not in _b5.scope_text(1400, botdb.get_brands(1400)))
 
-check("mileage announcement is Cyrillic",
-      CYR.search(botmod.T["announce_mileage"]) is not None)
-check("announcement points at /mileage", "/mileage" in botmod.T["announce_mileage"])
-check("mileage labels are Cyrillic",
-      all(CYR.search(v) for v in botmod.BAND_LABELS.values()))
+check("grouping headings exist for every bucket",
+      set(botmod.BAND_TITLES) == set(cf.MILEAGE_KEYS))
+check("scanner and bot agree on the bucket",
+      all(ev_tier(k) == botmod.band_of({"mileage_km": k})
+          for k in (0, 15000, 55000, 120000, 250000, None)))
+check("filters announcement is Cyrillic",
+      CYR.search(botmod.T["announce_filters"]) is not None)
+check("announcement mentions both new filters",
+      "/mileage" in botmod.T["announce_filters"]
+      and "/year" in botmod.T["announce_filters"])
 
 print("\n" + "=" * 46)
 print(f"  {PASS} passed, {FAIL} failed")

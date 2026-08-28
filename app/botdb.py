@@ -12,6 +12,8 @@ from __future__ import annotations
 import os
 import sqlite3
 import threading
+
+import carfilters
 from datetime import datetime, timedelta, timezone
 
 TASHKENT_TZ = timezone(timedelta(hours=5))
@@ -58,11 +60,18 @@ CREATE TABLE IF NOT EXISTS user_brands (
     PRIMARY KEY (tg_id, brand)
 );
 
--- Which mileage bands a subscriber wants. No rows means every band.
+-- Which mileage buckets a subscriber wants. No rows means every bucket.
 CREATE TABLE IF NOT EXISTS user_bands (
     tg_id INTEGER NOT NULL,
     band  TEXT NOT NULL,
     PRIMARY KEY (tg_id, band)
+);
+
+-- Which year buckets a subscriber wants. No rows means every year.
+CREATE TABLE IF NOT EXISTS user_years (
+    tg_id INTEGER NOT NULL,
+    yband TEXT NOT NULL,
+    PRIMARY KEY (tg_id, yband)
 );
 
 -- Optional narrowing inside a chosen brand. No row for a brand means "every model of
@@ -105,6 +114,8 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE INDEX IF NOT EXISTS idx_listings_brand ON listings(brand);
 CREATE INDEX IF NOT EXISTS idx_user_models_u   ON user_models(tg_id);
 CREATE INDEX IF NOT EXISTS idx_user_bands_u    ON user_bands(tg_id);
+CREATE INDEX IF NOT EXISTS idx_user_years_u    ON user_years(tg_id);
+CREATE INDEX IF NOT EXISTS idx_listings_year   ON listings(year);
 CREATE INDEX IF NOT EXISTS idx_listings_km     ON listings(mileage_km);
 CREATE INDEX IF NOT EXISTS idx_listings_seen  ON listings(first_seen);
 CREATE INDEX IF NOT EXISTS idx_user_sent_user ON user_sent(tg_id);
@@ -121,6 +132,21 @@ def init(admin_id: int | None = None) -> None:
             cols = {r[1] for r in conn.execute('PRAGMA table_info(listings)')}
             if 'model' not in cols:
                 conn.execute('ALTER TABLE listings ADD COLUMN model TEXT')
+            # The four coarse bands (under50/under100/under150/unknown) became ten
+            # finer buckets. Translate any existing subscription so nobody silently
+            # loses their mileage preference on upgrade.
+            legacy = conn.execute(
+                "SELECT DISTINCT tg_id FROM user_bands WHERE band IN "
+                "('under50','under100','under150','unknown')").fetchall()
+            for row in legacy:
+                uid = row[0]
+                old = {r[0] for r in conn.execute(
+                    "SELECT band FROM user_bands WHERE tg_id=?", (uid,))}
+                new = sorted({k for b in old for k in carfilters.LEGACY_MILEAGE.get(b, [])})
+                conn.execute("DELETE FROM user_bands WHERE tg_id=?", (uid,))
+                conn.executemany("INSERT OR IGNORE INTO user_bands(tg_id,band) VALUES(?,?)",
+                                 [(uid, k) for k in new])
+
             # The single-chat version kept a `seen` table. Carry those ad keys over so the
             # admin is not re-sent 200+ listings they already received.
             has_seen = conn.execute(
@@ -413,45 +439,36 @@ def _model_clause(tg_id: int, alias: str = "l.") -> tuple[str, list]:
             [tg_id, tg_id])
 
 
-# ------------------------------------------------------------- mileage-band filter ---
+# ------------------------------------------------------- mileage / year selections ---
 
-# Canonical bands. Kept here as the single source of truth for the SQL below; bot.py
-# mirrors the same keys for its headings so grouping and filtering can never disagree.
-BANDS = ("under50", "under100", "under150", "unknown")
-
-_BAND_SQL = {
-    "under50":  "({a}mileage_km IS NOT NULL AND {a}mileage_km < 50000)",
-    "under100": "({a}mileage_km >= 50000 AND {a}mileage_km < 100000)",
-    "under150": "({a}mileage_km >= 100000 AND {a}mileage_km <= 150000)",
-    "unknown":  "({a}mileage_km IS NULL)",
-}
+BANDS = carfilters.MILEAGE_KEYS
+YEARS = carfilters.YEAR_KEYS
 
 
-def get_bands(tg_id: int) -> set[str]:
-    """Mileage bands this user wants. Empty means every band."""
+def _get_set(table: str, tg_id: int) -> set[str]:
     conn = connect()
     try:
-        return {r["band"] for r in
-                conn.execute("SELECT band FROM user_bands WHERE tg_id=?", (tg_id,))}
+        col = "band" if table == "user_bands" else "yband"
+        return {r[col] for r in
+                conn.execute(f"SELECT {col} FROM {table} WHERE tg_id=?", (tg_id,))}
     finally:
         conn.close()
 
 
-def toggle_band(tg_id: int, band: str) -> bool:
-    if band not in BANDS:
-        raise ValueError(f"unknown mileage band: {band!r}")
+def _toggle(table: str, col: str, valid, tg_id: int, key: str) -> bool:
+    if key not in valid:
+        raise ValueError(f"unknown bucket: {key!r}")
     with _WRITE_LOCK:
         conn = connect()
         try:
-            hit = conn.execute("SELECT 1 FROM user_bands WHERE tg_id=? AND band=?",
-                               (tg_id, band)).fetchone()
+            hit = conn.execute(f"SELECT 1 FROM {table} WHERE tg_id=? AND {col}=?",
+                               (tg_id, key)).fetchone()
             if hit:
-                conn.execute("DELETE FROM user_bands WHERE tg_id=? AND band=?",
-                             (tg_id, band))
+                conn.execute(f"DELETE FROM {table} WHERE tg_id=? AND {col}=?", (tg_id, key))
                 selected = False
             else:
-                conn.execute("INSERT OR IGNORE INTO user_bands(tg_id,band) VALUES(?,?)",
-                             (tg_id, band))
+                conn.execute(f"INSERT OR IGNORE INTO {table}(tg_id,{col}) VALUES(?,?)",
+                             (tg_id, key))
                 selected = True
             conn.commit()
             return selected
@@ -459,37 +476,59 @@ def toggle_band(tg_id: int, band: str) -> bool:
             conn.close()
 
 
-def set_bands(tg_id: int, bands: list[str]) -> None:
-    for band in bands:
-        if band not in BANDS:
-            raise ValueError(f"unknown mileage band: {band!r}")
+def _set_all(table: str, col: str, valid, tg_id: int, keys: list[str]) -> None:
+    for key in keys:
+        if key not in valid:
+            raise ValueError(f"unknown bucket: {key!r}")
     with _WRITE_LOCK:
         conn = connect()
         try:
-            conn.execute("DELETE FROM user_bands WHERE tg_id=?", (tg_id,))
-            conn.executemany("INSERT OR IGNORE INTO user_bands(tg_id,band) VALUES(?,?)",
-                             [(tg_id, b) for b in bands])
+            conn.execute(f"DELETE FROM {table} WHERE tg_id=?", (tg_id,))
+            conn.executemany(f"INSERT OR IGNORE INTO {table}(tg_id,{col}) VALUES(?,?)",
+                             [(tg_id, k) for k in keys])
             conn.commit()
         finally:
             conn.close()
+
+
+def get_bands(tg_id: int) -> set[str]:
+    """Mileage buckets this user wants. Empty means every bucket."""
+    return _get_set("user_bands", tg_id)
+
+
+def toggle_band(tg_id: int, band: str) -> bool:
+    return _toggle("user_bands", "band", BANDS, tg_id, band)
+
+
+def set_bands(tg_id: int, bands: list[str]) -> None:
+    _set_all("user_bands", "band", BANDS, tg_id, bands)
 
 
 def clear_bands(tg_id: int) -> None:
     set_bands(tg_id, [])
 
 
-def _band_clause(tg_id: int, alias: str = "l.") -> str:
-    """SQL limiting rows to the mileage bands a user picked.
+def get_years(tg_id: int) -> set[str]:
+    """Year buckets this user wants. Empty means every year."""
+    return _get_set("user_years", tg_id)
 
-    Returns "" when nothing is selected, which reads as "every band" - so a subscriber
-    who never opens the picker keeps receiving exactly what they did before. The band
-    names are validated on write, so interpolating them here cannot inject anything.
-    """
-    chosen = get_bands(tg_id)
-    if not chosen or set(chosen) >= set(BANDS):
-        return ""
-    parts = [_BAND_SQL[b].format(a=alias) for b in BANDS if b in chosen]
-    return " AND (" + " OR ".join(parts) + ") " if parts else ""
+
+def toggle_year(tg_id: int, yband: str) -> bool:
+    return _toggle("user_years", "yband", YEARS, tg_id, yband)
+
+
+def set_years(tg_id: int, ybands: list[str]) -> None:
+    _set_all("user_years", "yband", YEARS, tg_id, ybands)
+
+
+def clear_years(tg_id: int) -> None:
+    set_years(tg_id, [])
+
+
+def _band_clause(tg_id: int, alias: str = "l.") -> str:
+    """Mileage + year restrictions for this user; '' when nothing is narrowed."""
+    return (carfilters.mileage_sql(get_bands(tg_id), f"{alias}mileage_km")
+            + carfilters.year_sql(get_years(tg_id), f"{alias}year"))
 
 
 def undelivered_for(tg_id: int, brands: set[str] | None, limit: int) -> list[dict]:

@@ -87,6 +87,31 @@ T = {
         "<b>Seagull</b>.\n\n"
         "Фильтрни тезроқ ва аниқроқ созлаш учун ҳозироқ синаб кўринг 👇\n"
         "/brands — брендни танланг, сўнг <b>🚙 Моделлар</b> тугмасини босинг."),
+    "mileage_btn": "🛣 Юриш (км)",
+    "mileage_prompt": ("🛣 <b>Қанча юрган машиналар керак?</b>\n"
+                       "<i>Керакли оралиқларни белгиланг. Ҳеч нарса танланмаса, "
+                       "барча оралиқлар юборилади.</i>"),
+    "all_mileage": "🌍 Барчаси",
+    "mileage_added": "{name} қўшилди",
+    "mileage_removed": "{name} олиб ташланди",
+    "mileage_cleared": "Барча оралиқлар (чеклов олиб ташланди)",
+    "every_mileage": "барча оралиқлар",
+    "km_label_under50": "50 000 км гача",
+    "km_label_under100": "50 000 – 100 000 км",
+    "km_label_under150": "100 000 – 150 000 км",
+    "km_label_unknown": "Кўрсатилмаган",
+    "announce_mileage": (
+        "🎉 <b>Янгилик: юриш (км) бўйича фильтр қўшилди!</b>\n\n"
+        "Энди машина қанча юрганини ҳам танлашингиз мумкин:\n"
+        "🥇 50 000 км гача\n"
+        "🥈 50 000 – 100 000 км\n"
+        "🥉 100 000 – 150 000 км\n"
+        "❔ Кўрсатилмаган\n\n"
+        "Масалан, фақат кам юрган машиналарни кўрмоқчи бўлсангиз — "
+        "<b>50 000 км гача</b> ни белгиланг, қолганлари юборилмайди.\n\n"
+        "Ҳозироқ синаб кўринг 👇\n"
+        "/mileage — юриш оралиғини танлаш\n"
+        "/brands — бренд · /models — модел"),
     "band_under50":  "<b>━━ 🥇 50 000 км гача ━━</b>",
     "band_under100": "<b>━━ 🥈 50 000 – 100 000 км ━━</b>",
     "band_under150": "<b>━━ 🥉 100 000 – 150 000 км ━━</b>",
@@ -129,6 +154,7 @@ BOT_COMMANDS = [
     {"command": "latest", "description": "Энг сўнгги эълонлар"},
     {"command": "brands", "description": "Брендларни танлаш"},
     {"command": "models", "description": "Моделларни танлаш"},
+    {"command": "mileage", "description": "Юриш (км) оралиғини танлаш"},
     {"command": "stop", "description": "Хабарларни тўхтатиш"},
     {"command": "start", "description": "Қайта бошлаш"},
     {"command": "help", "description": "Ёрдам"},
@@ -228,8 +254,8 @@ def brand_keyboard(tg_id: int, page: int = 0) -> dict:
     rows.append([{"text": T["all_brands"], "callback_data": f"all:{page}"},
                  {"text": T["clear"], "callback_data": f"none:{page}"}])
     models_row = models_button_row(tg_id)
-    if models_row:
-        rows.append(models_row)
+    extras = models_row + [{"text": T["mileage_btn"], "callback_data": "km"}]
+    rows.append(extras)
     rows.append([{"text": T["done"], "callback_data": "done"}])
     return {"inline_keyboard": rows}
 
@@ -278,6 +304,37 @@ def model_keyboard(tg_id: int, brand: str) -> dict:
     rows.append([{"text": T["back"], "callback_data": "mods"},
                  {"text": T["done"], "callback_data": "done"}])
     return {"inline_keyboard": rows}
+
+
+# Short labels for the band picker, keyed by the same names botdb validates against.
+BAND_LABELS = {
+    "under50":  T["km_label_under50"],
+    "under100": T["km_label_under100"],
+    "under150": T["km_label_under150"],
+    "unknown":  T["km_label_unknown"],
+}
+BAND_ICONS = {"under50": "🥇", "under100": "🥈", "under150": "🥉", "unknown": "❔"}
+BAND_KEYS = ("under50", "under100", "under150", "unknown")
+
+
+def mileage_keyboard(tg_id: int) -> dict:
+    chosen = botdb.get_bands(tg_id)
+    rows = []
+    for key in BAND_KEYS:
+        mark = "✅ " if key in chosen else ""
+        rows.append([{"text": f"{mark}{BAND_ICONS[key]} {BAND_LABELS[key]}",
+                      "callback_data": f"km:{key}"}])
+    rows.append([{"text": T["all_mileage"], "callback_data": "kmall"}])
+    rows.append([{"text": T["back"], "callback_data": "p:0"},
+                 {"text": T["done"], "callback_data": "done"}])
+    return {"inline_keyboard": rows}
+
+
+def mileage_summary(tg_id: int) -> str:
+    chosen = botdb.get_bands(tg_id)
+    if not chosen or set(chosen) >= set(BAND_KEYS):
+        return T["every_mileage"]
+    return ", ".join(BAND_LABELS[k] for k in BAND_KEYS if k in chosen)
 
 
 def admin_keyboard(tg_id: int, blocked: bool) -> dict:
@@ -397,6 +454,9 @@ class Bot:
             self.cmd_latest(chat_id, user)
             self.tg.send(chat_id, T["brand_prompt"],
                          reply_markup=brand_keyboard(tg_user["id"], 0))
+        elif command in ("mileage", "km", "probeg"):
+            self.tg.send(chat_id, T["mileage_prompt"],
+                         reply_markup=mileage_keyboard(tg_user["id"]))
         elif command in ("models", "model"):
             chosen = [b for b in botdb.get_brands(tg_user["id"]) if modellib.has_models(b)]
             if not chosen:
@@ -423,25 +483,34 @@ class Bot:
 
     def scope_text(self, tg_id: int, chosen: set) -> str:
         if not chosen:
-            return T["all_brands_scope"]
+            km = mileage_summary(tg_id)
+            return (T["all_brands_scope"] if km == T["every_mileage"]
+                    else f"{T['all_brands_scope']} · 🛣 {km}")
         picked = botdb.get_models(tg_id)
         parts = []
         for brand in sorted(chosen):
             models = sorted(picked.get(brand, ()))
             parts.append(f"{brand}: {', '.join(models)}" if models else brand)
-        return ", ".join(parts)
+        text = ", ".join(parts)
+        km = mileage_summary(tg_id)
+        return f"{text} · 🛣 {km}" if km != T["every_mileage"] else text
 
     def scope_summary(self, tg_id: int) -> str:
         """Human-readable description of what this user is subscribed to."""
         chosen = botdb.get_brands(tg_id)
+        km = mileage_summary(tg_id)
         if not chosen:
-            return T["saved"].format(scope=esc(T["every_brand"]))
-        picked = botdb.get_models(tg_id)
-        parts = []
-        for brand in sorted(chosen):
-            models = sorted(picked.get(brand, ()))
-            parts.append(f"{brand} ({', '.join(models)})" if models else brand)
-        return T["saved"].format(scope=esc(", ".join(parts)))
+            scope = T["every_brand"]
+        else:
+            picked = botdb.get_models(tg_id)
+            parts = []
+            for brand in sorted(chosen):
+                models = sorted(picked.get(brand, ()))
+                parts.append(f"{brand} ({', '.join(models)})" if models else brand)
+            scope = ", ".join(parts)
+        if km != T["every_mileage"]:
+            scope = scope + "\n🛣 " + km
+        return T["saved"].format(scope=esc(scope))
 
 
     def cmd_latest(self, chat_id: int, user: dict) -> None:
@@ -526,6 +595,29 @@ class Bot:
             self.tg.answer_callback(cq_id, T["cleared_cb"])
             self.tg.edit_markup(chat_id, message_id,
                                 reply_markup=brand_keyboard(tg_id, int(data.split(":")[1])))
+            return
+
+        # ---- mileage bands -------------------------------------------------------
+        if data == "km":
+            self.tg.edit(chat_id, message_id, T["mileage_prompt"],
+                         reply_markup=mileage_keyboard(tg_id))
+            self.tg.answer_callback(cq_id)
+            return
+
+        if data.startswith("km:"):
+            band = data.split(":", 1)[1]
+            if band in BAND_KEYS:
+                selected = botdb.toggle_band(tg_id, band)
+                key = "mileage_added" if selected else "mileage_removed"
+                self.tg.answer_callback(cq_id, T[key].format(name=BAND_LABELS[band]))
+                self.tg.edit_markup(chat_id, message_id,
+                                    reply_markup=mileage_keyboard(tg_id))
+            return
+
+        if data == "kmall":
+            botdb.clear_bands(tg_id)
+            self.tg.answer_callback(cq_id, T["mileage_cleared"])
+            self.tg.edit_markup(chat_id, message_id, reply_markup=mileage_keyboard(tg_id))
             return
 
         # ---- model drill-down ----------------------------------------------------

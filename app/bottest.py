@@ -421,6 +421,118 @@ check("announce is Cyrillic", CYR.search(botmod.T["announce"]) is not None)
 check("announce mentions models", "модел" in botmod.T["announce"].lower())
 check("announce points at /brands", "/brands" in botmod.T["announce"])
 
+print("\n=== 16. mileage-band filter ===")
+botdb.set_brands(1200, [])
+botdb.clear_bands(1200)
+km_rows = [
+    ("OLX:k1", "Low km car", 9000, 12000),
+    ("OLX:k2", "Mid km car", 9000, 70000),
+    ("OLX:k3", "High km car", 9000, 130000),
+    ("OLX:k4", "No km car", 9000, None),
+]
+for key, title, price, km in km_rows:
+    fl = FakeListing(key, title, price)
+    fl.mileage_km = km
+    botdb.upsert_listing(fl, "BYD", "under50", None)
+
+def keys_for(uid):
+    return {r["key"] for r in botdb.undelivered_for(uid, None, 50)}
+
+check("no band selected means every band",
+      {"OLX:k1", "OLX:k2", "OLX:k3", "OLX:k4"} <= keys_for(1200))
+
+check("toggle_band returns True", botdb.toggle_band(1200, "under50") is True)
+sel = keys_for(1200)
+check("under50 keeps the low-km car", "OLX:k1" in sel)
+check("under50 drops the 70k car", "OLX:k2" not in sel, sorted(sel))
+check("under50 drops the 130k car", "OLX:k3" not in sel)
+check("under50 drops the unknown-km car", "OLX:k4" not in sel)
+
+botdb.toggle_band(1200, "under150")
+two = keys_for(1200)
+check("two bands are a union", "OLX:k1" in two and "OLX:k3" in two)
+check("unselected band still excluded", "OLX:k2" not in two)
+
+botdb.set_bands(1200, ["unknown"])
+unk = keys_for(1200)
+check("unknown band matches NULL mileage only",
+      unk & {"OLX:k1", "OLX:k2", "OLX:k3", "OLX:k4"} == {"OLX:k4"}, sorted(unk))
+
+botdb.set_bands(1200, list(botdb.BANDS))
+check("selecting every band behaves like no filter",
+      {"OLX:k1", "OLX:k2", "OLX:k3", "OLX:k4"} <= keys_for(1200))
+
+botdb.clear_bands(1200)
+check("clear_bands widens again",
+      {"OLX:k1", "OLX:k2", "OLX:k3", "OLX:k4"} <= keys_for(1200))
+
+check("boundary 50000 belongs to under100",
+      botmod.band_of({"mileage_km": 50000}) == "under100")
+
+try:
+    botdb.toggle_band(1200, "under5000000")
+    check("rejects an unknown band", False, "no error raised")
+except ValueError:
+    check("rejects an unknown band", True)
+try:
+    botdb.set_bands(1200, ["'; DROP TABLE listings; --"])
+    check("set_bands rejects injection", False, "no error raised")
+except ValueError:
+    check("set_bands rejects injection", True)
+
+print("\n=== 17. mileage filter combines with brand and model ===")
+botdb.set_brands(1300, ["BYD"])
+b1 = FakeListing("OLX:c1", "BYD Seagull low", 9000); b1.mileage_km = 10000
+b2 = FakeListing("OLX:c2", "BYD Seagull high", 9000); b2.mileage_km = 120000
+b3 = FakeListing("OLX:c3", "BYD Dolphin low", 9000); b3.mileage_km = 10000
+botdb.upsert_listing(b1, "BYD", "under50", "Seagull")
+botdb.upsert_listing(b2, "BYD", "under150", "Seagull")
+botdb.upsert_listing(b3, "BYD", "under50", "Dolphin")
+botdb.set_models(1300, "BYD", ["Seagull"])
+botdb.set_bands(1300, ["under50"])
+combo = {r["key"] for r in botdb.undelivered_for(1300, {"BYD"}, 50)}
+check("brand+model+mileage all applied", "OLX:c1" in combo)
+check("wrong mileage excluded despite right model", "OLX:c2" not in combo)
+check("wrong model excluded despite right mileage", "OLX:c3" not in combo)
+check("/latest applies the mileage filter too",
+      all(r["mileage_km"] is not None and r["mileage_km"] < 50000
+          for r in botdb.latest_for(1300, {"BYD"}, 50)))
+
+print("\n=== 18. mileage picker UI ===")
+botdb.set_bands(1400, ["under50"])
+mkb = botmod.mileage_keyboard(1400)["inline_keyboard"]
+check("one row per band plus controls", len(mkb) == len(botmod.BAND_KEYS) + 2, len(mkb))
+check("selected band ticked",
+      any("✅" in b["text"] for r in mkb for b in r if "50 000 км гача" in b["text"]))
+check("mileage callbacks fit 64 bytes",
+      all(len(b.get("callback_data", "").encode()) <= 64 for r in mkb for b in r))
+check("has clear-all and done",
+      any(b["callback_data"] == "kmall" for r in mkb for b in r)
+      and any(b["callback_data"] == "done" for r in mkb for b in r))
+check("mileage summary names the band",
+      "50 000 км гача" in botmod.mileage_summary(1400))
+botdb.clear_bands(1400)
+check("summary says all when nothing chosen",
+      botmod.mileage_summary(1400) == botmod.T["every_mileage"])
+
+bkb = botmod.brand_keyboard(1400, 0)["inline_keyboard"]
+check("mileage button on the brand keyboard",
+      any(b["callback_data"] == "km" for r in bkb for b in r))
+
+_b4 = botmod.Bot({"telegram": {"bot_token": "x", "chat_id": "1", "admin_chat_id": "1"},
+                  "runtime": {"max_items_per_message": 5}}, lambda *a, **k: None)
+botdb.set_bands(1400, ["under50"])
+check("scope mentions the mileage choice",
+      "🛣" in _b4.scope_text(1400, botdb.get_brands(1400)),
+      _b4.scope_text(1400, botdb.get_brands(1400)))
+check("saved summary mentions mileage", "🛣" in _b4.scope_summary(1400))
+
+check("mileage announcement is Cyrillic",
+      CYR.search(botmod.T["announce_mileage"]) is not None)
+check("announcement points at /mileage", "/mileage" in botmod.T["announce_mileage"])
+check("mileage labels are Cyrillic",
+      all(CYR.search(v) for v in botmod.BAND_LABELS.values()))
+
 print("\n" + "=" * 46)
 print(f"  {PASS} passed, {FAIL} failed")
 print("=" * 46)

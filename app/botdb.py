@@ -58,6 +58,13 @@ CREATE TABLE IF NOT EXISTS user_brands (
     PRIMARY KEY (tg_id, brand)
 );
 
+-- Which mileage bands a subscriber wants. No rows means every band.
+CREATE TABLE IF NOT EXISTS user_bands (
+    tg_id INTEGER NOT NULL,
+    band  TEXT NOT NULL,
+    PRIMARY KEY (tg_id, band)
+);
+
 -- Optional narrowing inside a chosen brand. No row for a brand means "every model of
 -- it", so subscribers who never open the model picker keep their existing behaviour.
 CREATE TABLE IF NOT EXISTS user_models (
@@ -97,6 +104,8 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 
 CREATE INDEX IF NOT EXISTS idx_listings_brand ON listings(brand);
 CREATE INDEX IF NOT EXISTS idx_user_models_u   ON user_models(tg_id);
+CREATE INDEX IF NOT EXISTS idx_user_bands_u    ON user_bands(tg_id);
+CREATE INDEX IF NOT EXISTS idx_listings_km     ON listings(mileage_km);
 CREATE INDEX IF NOT EXISTS idx_listings_seen  ON listings(first_seen);
 CREATE INDEX IF NOT EXISTS idx_user_sent_user ON user_sent(tg_id);
 """
@@ -404,6 +413,85 @@ def _model_clause(tg_id: int, alias: str = "l.") -> tuple[str, list]:
             [tg_id, tg_id])
 
 
+# ------------------------------------------------------------- mileage-band filter ---
+
+# Canonical bands. Kept here as the single source of truth for the SQL below; bot.py
+# mirrors the same keys for its headings so grouping and filtering can never disagree.
+BANDS = ("under50", "under100", "under150", "unknown")
+
+_BAND_SQL = {
+    "under50":  "({a}mileage_km IS NOT NULL AND {a}mileage_km < 50000)",
+    "under100": "({a}mileage_km >= 50000 AND {a}mileage_km < 100000)",
+    "under150": "({a}mileage_km >= 100000 AND {a}mileage_km <= 150000)",
+    "unknown":  "({a}mileage_km IS NULL)",
+}
+
+
+def get_bands(tg_id: int) -> set[str]:
+    """Mileage bands this user wants. Empty means every band."""
+    conn = connect()
+    try:
+        return {r["band"] for r in
+                conn.execute("SELECT band FROM user_bands WHERE tg_id=?", (tg_id,))}
+    finally:
+        conn.close()
+
+
+def toggle_band(tg_id: int, band: str) -> bool:
+    if band not in BANDS:
+        raise ValueError(f"unknown mileage band: {band!r}")
+    with _WRITE_LOCK:
+        conn = connect()
+        try:
+            hit = conn.execute("SELECT 1 FROM user_bands WHERE tg_id=? AND band=?",
+                               (tg_id, band)).fetchone()
+            if hit:
+                conn.execute("DELETE FROM user_bands WHERE tg_id=? AND band=?",
+                             (tg_id, band))
+                selected = False
+            else:
+                conn.execute("INSERT OR IGNORE INTO user_bands(tg_id,band) VALUES(?,?)",
+                             (tg_id, band))
+                selected = True
+            conn.commit()
+            return selected
+        finally:
+            conn.close()
+
+
+def set_bands(tg_id: int, bands: list[str]) -> None:
+    for band in bands:
+        if band not in BANDS:
+            raise ValueError(f"unknown mileage band: {band!r}")
+    with _WRITE_LOCK:
+        conn = connect()
+        try:
+            conn.execute("DELETE FROM user_bands WHERE tg_id=?", (tg_id,))
+            conn.executemany("INSERT OR IGNORE INTO user_bands(tg_id,band) VALUES(?,?)",
+                             [(tg_id, b) for b in bands])
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def clear_bands(tg_id: int) -> None:
+    set_bands(tg_id, [])
+
+
+def _band_clause(tg_id: int, alias: str = "l.") -> str:
+    """SQL limiting rows to the mileage bands a user picked.
+
+    Returns "" when nothing is selected, which reads as "every band" - so a subscriber
+    who never opens the picker keeps receiving exactly what they did before. The band
+    names are validated on write, so interpolating them here cannot inject anything.
+    """
+    chosen = get_bands(tg_id)
+    if not chosen or set(chosen) >= set(BANDS):
+        return ""
+    parts = [_BAND_SQL[b].format(a=alias) for b in BANDS if b in chosen]
+    return " AND (" + " OR ".join(parts) + ") " if parts else ""
+
+
 def undelivered_for(tg_id: int, brands: set[str] | None, limit: int) -> list[dict]:
     """Newest catalogue entries this user has not been sent yet.
 
@@ -421,6 +509,7 @@ def undelivered_for(tg_id: int, brands: set[str] | None, limit: int) -> list[dic
             clause, clause_params = _model_clause(tg_id, "l.")
             sql += clause
             params += clause_params
+        sql += _band_clause(tg_id, "l.")
         sql += "ORDER BY l.first_seen DESC, l.price_usd ASC LIMIT ?"
         params.append(limit)
         return [dict(r) for r in conn.execute(sql, params).fetchall()]
@@ -440,6 +529,7 @@ def latest_for(tg_id: int, brands: set[str] | None, limit: int) -> list[dict]:
             clause, clause_params = _model_clause(tg_id, "")
             sql += clause
             params += clause_params
+        sql += _band_clause(tg_id, "")
         sql += "ORDER BY first_seen DESC, price_usd ASC LIMIT ?"
         params.append(limit)
         return [dict(r) for r in conn.execute(sql, params).fetchall()]

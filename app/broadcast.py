@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 """One-off announcement sender.
 
-    docker exec ev-hunter python /app/broadcast.py            # dry run, prints only
-    docker exec ev-hunter python /app/broadcast.py --send     # actually sends
+    docker exec ev-hunter python /app/broadcast.py --key announce_mileage
+    docker exec ev-hunter python /app/broadcast.py --key announce_mileage --send
 
-Sends bot.T["announce"] to every non-blocked subscriber. A chat that answers 400/403
+Sends the named bot.T[...] entry to every non-blocked subscriber. A chat that answers 400/403
 is unreachable until the user starts the bot again, so it is reported, not retried.
 """
 
@@ -22,10 +22,16 @@ from telegram_api import Telegram  # noqa: E402
 
 def main() -> int:
     send = "--send" in sys.argv
+    key = "announce"
+    if "--key" in sys.argv:
+        key = sys.argv[sys.argv.index("--key") + 1]
+    if key not in botmod.T:
+        print(f"no such message key: {key!r}")
+        return 1
     cfg = ev.load_config()
     botdb.init()
     tg = Telegram(cfg["telegram"]["bot_token"], logger=ev.log)
-    text = botmod.T["announce"]
+    text = botmod.T[key]
 
     targets = [u for u in botdb.all_users() if not u["blocked"]]
     print(f"{'SENDING to' if send else 'DRY RUN -'} {len(targets)} subscriber(s)\n")

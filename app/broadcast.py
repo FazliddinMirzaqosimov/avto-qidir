@@ -2,10 +2,12 @@
 # -*- coding: utf-8 -*-
 """One-off announcement sender.
 
-    docker exec ev-hunter python /app/broadcast.py --key announce_mileage
-    docker exec ev-hunter python /app/broadcast.py --key announce_mileage --send
+    docker exec ev-hunter python /app/broadcast.py --key announce_x --send
+    docker exec ev-hunter python /app/broadcast.py --key fix_x --admin --send
 
-Sends the named bot.T[...] entry to every non-blocked subscriber. A chat that answers 400/403
+Sends the named bot.T[...] entry to every non-blocked subscriber, or with --admin
+to the admin alone. Per CLAUDE.md: new features go to everyone, bug fixes go to
+the admin only - subscribers should not be pinged for repairs they never noticed. A chat that answers 400/403
 is unreachable until the user starts the bot again, so it is reported, not retried.
 """
 
@@ -33,7 +35,16 @@ def main() -> int:
     tg = Telegram(cfg["telegram"]["bot_token"], logger=ev.log)
     text = botmod.T[key]
 
-    targets = [u for u in botdb.all_users() if not u["blocked"]]
+    admin_only = "--admin" in sys.argv
+    if admin_only:
+        admin = str(cfg["telegram"].get("admin_chat_id")
+                    or cfg["telegram"].get("chat_id") or "").strip()
+        if not admin.lstrip("-").isdigit():
+            print("no admin id configured")
+            return 1
+        targets = [u for u in botdb.all_users() if str(u["tg_id"]) == admin]             or [{"tg_id": int(admin), "first_name": "admin"}]
+    else:
+        targets = [u for u in botdb.all_users() if not u["blocked"]]
     print(f"{'SENDING to' if send else 'DRY RUN -'} {len(targets)} subscriber(s)\n")
     if not send:
         print(text)

@@ -621,6 +621,29 @@ check("most brands now carry a model list",
 check("no model list is empty",
       all(modellib.models_for(b) for b in modellib.MODELS))
 
+print("\n=== 22. admin-only vs broadcast conventions ===")
+import re as _re2  # noqa: E402
+
+FIX_KEYS = [k for k in botmod.T if k.startswith("fix_")]
+ANNOUNCE_KEYS = [k for k in botmod.T if k.startswith("announce")]
+check("at least one admin-only fix note exists", FIX_KEYS, FIX_KEYS)
+check("fix notes are Cyrillic",
+      all(CYR.search(botmod.T[k]) for k in FIX_KEYS))
+check("announcements are Cyrillic",
+      all(CYR.search(botmod.T[k]) for k in ANNOUNCE_KEYS))
+check("fix notes are marked as admin-only in the text",
+      all("админ" in botmod.T[k].lower() for k in FIX_KEYS))
+check("announcements never claim to be admin-only",
+      not any("фақат админ" in botmod.T[k].lower() for k in ANNOUNCE_KEYS))
+check("every message fits Telegram's 4096-char limit",
+      all(len(v) <= 4096 for v in botmod.T.values() if isinstance(v, str)),
+      [k for k, v in botmod.T.items() if isinstance(v, str) and len(v) > 4096])
+
+_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "broadcast.py"), encoding="utf-8").read()
+check("broadcast supports --admin", "--admin" in _src)
+check("broadcast still defaults to a dry run", '"--send" in sys.argv' in _src)
+
 print("\n" + "=" * 46)
 print(f"  {PASS} passed, {FAIL} failed")
 print("=" * 46)
